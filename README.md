@@ -10,7 +10,10 @@ you drive it with the gamepad, a USB keyboard and mouse, or the on-screen keyboa
 | ![SELECT menu](docs/screenshots/menu.png) | ![Address bar with the Ukrainian on-screen keyboard](docs/screenshots/keyboard-ua.png) |
 | ![r/trimui on Reddit](docs/screenshots/reddit.jpg) | ![WebGL Aquarium at 30 fps](docs/screenshots/webgl-aquarium.jpg) |
 | ![Play or download prompt for a video link](docs/screenshots/download-prompt.jpg) | ![Downloads page with a download in progress](docs/screenshots/downloads.png) |
-| ![Portrait mode](docs/screenshots/portrait-small.png) | ![Portrait mode, example.com in several languages](docs/screenshots/portrait-languages.png) |
+
+| | | |
+|---|---|---|
+| ![Portrait mode, Wikipedia](docs/screenshots/portrait-small.png) | ![Portrait mode, Ukrainska Pravda with the address bar and on-screen keyboard](docs/screenshots/portrait-keyboard.jpg) | ![Portrait mode, example.com in several languages](docs/screenshots/portrait-languages.png) |
 
 ## ✨ Features
 
