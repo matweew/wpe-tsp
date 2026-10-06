@@ -8,7 +8,9 @@ you drive it with the gamepad, a USB keyboard and mouse, or the on-screen keyboa
 |---|---|
 | ![Wikipedia article](docs/screenshots/article.png) | ![YouTube page after playing in mpv, with the Play in mpv button](docs/screenshots/youtube.jpg) |
 | ![SELECT menu](docs/screenshots/menu.png) | ![Address bar with the Ukrainian on-screen keyboard](docs/screenshots/keyboard-ua.png) |
-| ![Portrait mode](docs/screenshots/portrait-small.png) | ![WebGL Aquarium at 30 fps](docs/screenshots/webgl-aquarium.jpg) |
+| ![r/trimui on Reddit](docs/screenshots/reddit.jpg) | ![WebGL Aquarium at 30 fps](docs/screenshots/webgl-aquarium.jpg) |
+| ![Play or download prompt for a video link](docs/screenshots/download-prompt.jpg) | ![Downloads page with a download in progress](docs/screenshots/downloads.png) |
+| ![Portrait mode](docs/screenshots/portrait-small.png) | ![Portrait mode, example.com in several languages](docs/screenshots/portrait-languages.png) |
 
 ## ✨ Features
 
@@ -438,7 +440,7 @@ send it keyboard and mouse input, then check a screenshot and the log.
 
   | Step | Does |
   |---|---|
-  | `t:TEXT` | type text (a-z A-Z 0-9 space `. , / : -`, US layout) |
+  | `t:TEXT` | type text (a-z A-Z 0-9 space `. , / : - _ = ?`, US layout) |
   | `k:CODE` | press a key by Linux `KEY_*` code |
   | `C:CODE` | Ctrl + key |
   | `M:MOD,KEY` | modifier + key (`M:56,42` = Alt+Shift) |
@@ -536,7 +538,16 @@ notice follows for a few seconds. `wpe-tsp://downloads` (SELECT → Downloads �
 - the free space. *Clear list* only clears the session entries; files are never deleted from the page.
 
 Existing files are never overwritten (`name (1).ext`), and partial files are removed when a download fails
-or is cancelled.
+or is cancelled. WebKit writes to `<name>.wkdownload` (plus an empty `<name>` placeholder) until a
+download completes: those are not listed as saved files, and the ones left by a download interrupted by
+the browser being killed (power off, an update) are removed at the next start.
+
+WebKit corrects the extension of a file name taken from the URL when it doesn't match the server's
+Content-Type, but compares type names without resolving MIME aliases (`debian.iso` served as
+`application/x-iso9660-image` became `debian.iso9660`). The browser keeps the URL's name when WebKit only
+changed the extension and the original extension's type is the response's type or a subtype of it
+(checked with GIO against the bundled MIME database); real corrections, such as `download.php` served as
+a PDF becoming `download.pdf`, stay.
 
 ### WebGL
 

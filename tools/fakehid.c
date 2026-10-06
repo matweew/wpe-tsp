@@ -4,7 +4,7 @@
  * the steps on. The device appears, the steps run in order, then it is unplugged again.
  *
  * Steps (one argument each):
- *   t:TEXT     type text: a-z A-Z 0-9 space . , / : - (US layout; uppercase and ':' with Shift)
+ *   t:TEXT     type text: a-z A-Z 0-9 space . , / : - _ = ? (US layout, Shift where needed)
  *   k:CODE     press and release a key: Linux KEY_* code (Enter 28, Esc 1, Down 108, ...)
  *   C:CODE     Ctrl + key (C:38 = Ctrl+L)
  *   M:MOD,KEY  modifier + key, both KEY_* codes (M:56,42 = Alt+Shift)
@@ -80,7 +80,10 @@ static int key_of(char c, int *shift)
     case ',': return KEY_COMMA;
     case '/': return KEY_SLASH;
     case '-': return KEY_MINUS;
+    case '=': return KEY_EQUAL;
     case ':': *shift = 1; return KEY_SEMICOLON;
+    case '_': *shift = 1; return KEY_MINUS;
+    case '?': *shift = 1; return KEY_SLASH;
     }
     return 0;
 }
