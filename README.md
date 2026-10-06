@@ -8,8 +8,7 @@ you drive it with the gamepad, a USB keyboard and mouse, or the on-screen keyboa
 |---|---|
 | ![Wikipedia article](docs/screenshots/article.png) | ![YouTube page after playing in mpv, with the Play in mpv button](docs/screenshots/youtube.jpg) |
 | ![SELECT menu](docs/screenshots/menu.png) | ![Address bar with the Ukrainian on-screen keyboard](docs/screenshots/keyboard-ua.png) |
-
-<p align="center"><img src="docs/screenshots/portrait.png" alt="Portrait mode" width="270"></p>
+| ![Portrait mode](docs/screenshots/portrait-small.png) | ![WebGL Aquarium at 30 fps](docs/screenshots/webgl-aquarium.jpg) |
 
 ## ✨ Features
 
@@ -29,6 +28,8 @@ you drive it with the gamepad, a USB keyboard and mouse, or the on-screen keyboa
 - ⌨️🖱️ **USB keyboard and mouse**: plug and play, with shortcuts and layout switching.
 - 🌍 **Any keyboard layout**: all XKB layouts (Ukrainian, German, French, Dvorak…) for both keyboards,
   switched with one key.
+- 🧊 **WebGL** (optional, `WEBGL=1`): 3D in pages on the GPU; the WebGL Aquarium sample runs at 30 fps
+  with 500 fish.
 - 📱 **Portrait mode**: turn the device sideways for long articles and feeds, like mpv does for portrait
   videos.
 - ⬇️ **Downloads**: save files, links and page media to the SD card, and play videos and audios from there.
@@ -172,6 +173,7 @@ keep their own licenses.
 - [Third-party sources](#third-party-sources)
 - [Building](#building)
 - [Deploying and device scripts](#deploying-and-device-scripts)
+- [Testing on the device](#testing-on-the-device)
 - [How the features work](#how-the-features-work)
 - [WebKit patches](#webkit-patches)
 - [Repository layout](#repository-layout)
@@ -409,18 +411,70 @@ scripts/deploy.sh --delete    # also remove files on the device that are no long
 
 The app appears in TrimUI's **Apps** menu as **WPE Browser** (`config.json`, `icon.png`).
 
-- **Starting over SSH:** `scripts/run-on-device.sh [url]` starts it the way MainUI does (an optional URL is
-  opened first; Home stays `HOME_URL`). It writes `/tmp/cmd_to_run.sh`, which `/usr/trimui/bin/runtrimui.sh`
+- **Starting over SSH:** `scripts/run-on-device.sh [NAME=value ...] [url]` starts it the way MainUI does
+  (an optional URL is opened first; Home stays `HOME_URL`; `NAME=value` sets the environment for this run,
+  e.g. `WPE_TSP_START_PAGE=address`). It writes `/tmp/cmd_to_run.sh`, which `/usr/trimui/bin/runtrimui.sh`
   runs, then `killall -9 MainUI` (a plain kill is ignored). Starting `launch.sh` directly from SSH leaves
   MainUI drawing on the screen.
 - **Screenshot:** `scripts/screenshot.sh out.png` captures the framebuffer of the running device.
   While the page moves, the capture (36 ms) spans several screen refreshes and shows horizontal bands
   from different frames; that's the capture, not the screen.
 - **Log:** `/mnt/SDCARD/Apps/WPE/wpe-tsp.log` (stdout/stderr of the app and WebKit, overwritten at each start).
-- **Diagnostics** (environment, e.g. in `/tmp/cmd_to_run.sh`): `WPE_TSP_STATS=1` logs frames per second,
+- **Diagnostics** (environment, e.g. `scripts/run-on-device.sh WPE_TSP_STATS=1`): `WPE_TSP_STATS=1` logs frames per second,
   upload MB/s and the share of each frame that changed every 5 s; `WPE_TSP_CONSOLE=1` writes the pages'
   JavaScript console messages to the log; `WPE_TSP_ZERO_COPY=0` forces copied frames. Any setting can be
   overridden as `WPE_TSP_<NAME>` (e.g. `WPE_TSP_START_PAGE=address`).
+
+## Testing on the device
+
+Changes are tested on the real device, driven from the build host: start the browser with a test page,
+send it keyboard and mouse input, then check a screenshot and the log.
+
+- `scripts/run-on-device.sh [NAME=value ...] [url]` starts the browser (see above). Test pages can be any
+  URL, a `data:` URL, or a file copied to the device (`file:///tmp/test.html`).
+- `scripts/device-input.sh STEP...` plugs a **virtual USB keyboard + mouse** into the device (uinput),
+  runs the steps and unplugs it. The browser handles it like a real one, so this tests the actual input
+  path. `tools/fakehid.c` is built static for aarch64 into `build/fakehid` on first use and copied to the
+  device's `/tmp`. Steps:
+
+  | Step | Does |
+  |---|---|
+  | `t:TEXT` | type text (a-z A-Z 0-9 space `. , / : -`, US layout) |
+  | `k:CODE` | press a key by Linux `KEY_*` code |
+  | `C:CODE` | Ctrl + key |
+  | `M:MOD,KEY` | modifier + key (`M:56,42` = Alt+Shift) |
+  | `m:DX,DY` | move the mouse |
+  | `c`, `c:2`, `c:3` | left, middle, right click |
+  | `w:N` | wheel, N notches (positive = up) |
+  | `s:MS` | wait |
+
+  Useful key codes: Esc 1, Backspace 14, Tab 15, Enter 28, Ctrl 29, Shift 42, Alt 56, Space 57, F5 63,
+  F6 64, Up 103, Left 105, Right 106, Down 108, Super 125, Menu 127.
+- `scripts/screenshot.sh out.png` saves the screen; the log is `/mnt/SDCARD/Apps/WPE/wpe-tsp.log`.
+  The gamepad itself can't be simulated this way, but keyboard shortcuts reach the same features
+  (Menu key = SELECT menu, Ctrl+L = address bar).
+
+Example: open a page, search from the address bar with the Ukrainian layout, check the result.
+
+```bash
+scripts/run-on-device.sh WPE_TSP_KEYBOARD_LAYOUTS=us,ua https://en.wikipedia.org/wiki/WebKit
+sleep 15                                         # start + page load
+scripts/device-input.sh C:38 M:56,42 t:ghbdsn    # Ctrl+L, Alt+Shift (to UA), type "привіт"
+scripts/screenshot.sh /tmp/urlbar.png            # address bar + Ukrainian on-screen keyboard
+scripts/device-input.sh k:28                     # Enter: searches "привіт"
+sleep 5 && scripts/screenshot.sh /tmp/search.png
+ssh "$(cat .device)" grep input: /mnt/SDCARD/Apps/WPE/wpe-tsp.log   # "fakehid … keyboard mouse"
+```
+
+Another one: open the SELECT menu with the Menu key, go down six items to *Portrait mode* and select it:
+
+```bash
+scripts/device-input.sh k:127 k:108 k:108 k:108 k:108 k:108 k:108 k:28
+```
+
+For a JavaScript-visible check, give the test page its own event log, e.g. a `data:` page that writes
+`keydown`/`mousedown`/`wheel` events into the document, and look at the screenshot; or log with
+`console.log` and start with `WPE_TSP_CONSOLE=1`, which puts the messages into `wpe-tsp.log`.
 
 ## How the features work
 
@@ -618,11 +672,14 @@ scripts/
   fetch-device-sdl.sh                 copy the device's SDL2 libs into sysroot-device/
   deploy.sh                           checksum-based sync of dist/WPE to the device
   run-on-device.sh, screenshot.sh     device helpers (launch like MainUI, framebuffer capture)
+  device-input.sh                     virtual keyboard + mouse input for tests (tools/fakehid.c)
   device.sh                           reads the device's ssh target from .device
   make_icon.py                        generates app/icon.png
   xkb-minimal.py                      minimal XKB data for WPE's own (us) keymap
   xkb-keymaps.py                      every XKB layout precompiled into share/xkb-keymaps.bin
   make-adblock.py                     EasyList/EasyPrivacy domain rules → WebKit content-blocker JSON
+tools/fakehid.c                       uinput keyboard + mouse used by scripts/device-input.sh
+docs/screenshots/                     README screenshots
 .device                               ssh target of the device, e.g. root@192.168.31.36 (local, not in git)
 sysroot-device/                       device SDL2/SDL2_ttf for linking (generated)
 src/                                  WebKit tarball + patched tree (generated)
