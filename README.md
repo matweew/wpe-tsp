@@ -47,7 +47,7 @@ you drive it with the gamepad, a USB keyboard and mouse, or the on-screen keyboa
 
 You need a TrimUI Smart Pro with the stock firmware and Wi-Fi, and about 260 MB free on the SD card.
 
-1. Download `WPE.zip` from the [Releases](../../releases) page.
+1. Download `WPE-<version>.zip` from the [latest release](../../releases/latest).
 2. Unpack it so that the browser's folder is `Apps/WPE` on the SD card (the device path must be exactly
    `/mnt/SDCARD/Apps/WPE`).
 3. Start **WPE Browser** from the **Apps** menu.
@@ -374,7 +374,7 @@ docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/work \
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/work wpe-tsp-builder scripts/package.sh
 
 # 5. A release archive: the WPE folder, unpacked into Apps/ on the SD card
-(cd dist && zip -qr ../WPE.zip WPE)
+(cd dist && zip -qr -9 ../WPE-<version>.zip WPE)
 ```
 
 - `scripts/build-webkit.sh` holds the WebKit CMake options (see the `-D…` list). Disabled: GStreamer
