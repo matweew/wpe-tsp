@@ -52,7 +52,8 @@ You need a TrimUI Smart Pro with the stock firmware and Wi-Fi, and about 260 MB 
    `/mnt/SDCARD/Apps/WPE`).
 3. Start **WPE Browser** from the **Apps** menu.
 
-The first start takes ~25 seconds longer: the ad-block list is compiled once in the background. Your
+On the first start the ad-block list is compiled once in the background (~25 seconds): you can browse
+right away, ads are blocked from then on. Your
 settings live in `Apps/WPE/settings.conf`. Browsing data (cookies,
 cache, history) is kept on the device's internal storage in `/mnt/UDISK/wpe-browser`.
 
