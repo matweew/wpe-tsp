@@ -5,6 +5,7 @@
 #include "downloads.h"
 
 #include "pages.h"
+#include <gio/gio.h>
 #include <glib/gstdio.h>
 #include <stdio.h>
 #include <string.h>
@@ -125,11 +126,48 @@ static char *unique_path(const char *name)
     return path;
 }
 
+/* WebKit corrects a URL-derived file name's extension when it doesn't match the Content-Type, but
+ * compares MIME type names without resolving aliases: "debian.iso" served as
+ * application/x-iso9660-image (an alias of the type *.iso maps to) became "debian.iso9660".
+ * Returns the URL's own file name when WebKit only changed its extension and the original
+ * extension's type is the response's type (or a subtype of it), else NULL. */
+static char *url_name_if_same_type(WebKitDownload *download, const char *suggested)
+{
+    WebKitURIRequest *request = webkit_download_get_request(download);
+    WebKitURIResponse *response = webkit_download_get_response(download);
+    const char *mime = response ? webkit_uri_response_get_mime_type(response) : NULL;
+    GUri *uri = request ? g_uri_parse(webkit_uri_request_get_uri(request), G_URI_FLAGS_NONE, NULL) : NULL;
+    char *original = uri ? g_path_get_basename(g_uri_get_path(uri)) : NULL;
+    if (uri)
+        g_uri_unref(uri);
+    const char *dot = original ? strrchr(original, '.') : NULL;
+    const char *suggested_dot = strrchr(suggested, '.');
+    char *result = NULL;
+    if (mime && dot && dot != original && suggested_dot && strcmp(original, suggested)
+        && dot - original == suggested_dot - suggested && !strncmp(original, suggested, (size_t)(dot - original))) {
+        char *ext_type = g_content_type_guess(original, NULL, 0, NULL);
+        char *response_type = g_content_type_from_mime_type(mime);
+        if (ext_type && response_type && !g_content_type_is_unknown(ext_type)
+            && (g_content_type_is_a(ext_type, response_type) || g_content_type_is_a(response_type, ext_type)))
+            result = g_strdup(original);
+        g_free(ext_type);
+        g_free(response_type);
+    }
+    g_free(original);
+    return result;
+}
+
 static gboolean on_decide_destination(WebKitDownload *download, const char *suggested_filename, gpointer user_data)
 {
     (void)user_data;
     Item *item = find_item(download);
     char *name = g_path_get_basename(suggested_filename && *suggested_filename ? suggested_filename : "download");
+    char *url_name = url_name_if_same_type(download, name);
+    if (url_name) {
+        fprintf(stderr, "[wpe-tsp] downloads: keeping %s (WebKit suggested %s)\n", url_name, name);
+        g_free(name);
+        name = url_name;
+    }
     if (!strcmp(name, ".") || !strcmp(name, "/")) {
         g_free(name);
         name = g_strdup("download");
@@ -220,12 +258,36 @@ static void on_download_started(WebKitNetworkSession *session, WebKitDownload *d
     notify_changed(TRUE);
 }
 
+/* Downloads interrupted by the browser being killed (power off, an update) leave WebKit's partial
+ * "<name>.wkdownload" and the empty placeholder "<name>" it creates at the start: remove both. */
+static void remove_interrupted_downloads(void)
+{
+    GDir *dir = g_dir_open(dl.dir, 0, NULL);
+    const char *name;
+    while (dir && (name = g_dir_read_name(dir))) {
+        if (!g_str_has_suffix(name, ".wkdownload"))
+            continue;
+        char *partial = g_build_filename(dl.dir, name, NULL);
+        char *target = g_strndup(partial, strlen(partial) - strlen(".wkdownload"));
+        GStatBuf st;
+        if (g_stat(target, &st) == 0 && S_ISREG(st.st_mode) && st.st_size == 0)
+            g_unlink(target);
+        g_unlink(partial);
+        fprintf(stderr, "[wpe-tsp] downloads: removed interrupted %s\n", name);
+        g_free(partial);
+        g_free(target);
+    }
+    if (dir)
+        g_dir_close(dir);
+}
+
 void downloads_init(WebKitNetworkSession *session, const char *dir, DownloadsChanged changed,
                     DownloadsPlay play, void *user_data)
 {
     dl.play = play;
     dl.dir = g_strdup(dir);
     g_mkdir_with_parents(dl.dir, 0755); /* also makes the free-space check work from the start */
+    remove_interrupted_downloads();
     dl.changed = changed;
     dl.user_data = user_data;
     dl.items = g_ptr_array_new_with_free_func(item_free);
@@ -343,7 +405,10 @@ static GPtrArray *saved_files(void)
     while (dir && (name = g_dir_read_name(dir))) {
         char *path = g_build_filename(dl.dir, name, NULL);
         GStatBuf st;
-        if (name[0] != '.' && g_stat(path, &st) == 0 && S_ISREG(st.st_mode) && !is_being_downloaded(path)) {
+        /* WebKit writes "<name>.wkdownload" until a download completes: in progress or left over
+         * from an interrupted one, not a saved file */
+        if (name[0] != '.' && !g_str_has_suffix(name, ".wkdownload") && g_stat(path, &st) == 0
+            && S_ISREG(st.st_mode) && !is_being_downloaded(path)) {
             SavedFile *f = g_new0(SavedFile, 1);
             f->name = g_strdup(name);
             f->size = (gint64)st.st_size;

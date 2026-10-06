@@ -246,10 +246,9 @@ void menu_draw_status(const char *text, double progress, int bottom)
     const SDL_Color color = { 232, 234, 237, 255 };
     const int h = 40;
     SDL_Rect strip = { 0, bottom - h, menu.screen_w, h };
-    SDL_SetRenderDrawBlendMode(menu.renderer, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(menu.renderer, 32, 33, 36, 230);
+    /* opaque: page text behind it (e.g. the wpe-tsp:// pages' hint bar) would show through */
+    SDL_SetRenderDrawColor(menu.renderer, 32, 33, 36, 255);
     SDL_RenderFillRect(menu.renderer, &strip);
-    SDL_SetRenderDrawBlendMode(menu.renderer, SDL_BLENDMODE_NONE);
     if (progress >= 0) {
         SDL_SetRenderDrawColor(menu.renderer, 138, 180, 248, 255);
         SDL_RenderFillRect(menu.renderer, &(SDL_Rect){ 0, bottom - h, (int)(menu.screen_w * progress), 3 });
