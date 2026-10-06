@@ -18,7 +18,7 @@ you drive it with the gamepad, a USB keyboard and mouse, or the on-screen keyboa
 ## ✨ Features
 
 - 🚀 **GPU accelerated**: pages are rendered on the PowerVR GE8300 and handed to the screen without
-  copying (zero-copy frames): ~60 fps scrolling instead of 25.
+  copying (zero-copy frames): ~60 fps scrolling.
 - 🧠 **Made for 1 GB of RAM**: one page process, memory limits and a low-memory watchdog keep the device
   responsive; the mobile site versions it asks for are much lighter.
 - 📺 **YouTube in hardware-accelerated mpv**: video pages play in the bundled mpv with the Allwinner
