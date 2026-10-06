@@ -2,7 +2,14 @@
 
 A real web browser for the **TrimUI Smart Pro** handheld, built on [WPE WebKit](https://wpewebkit.org/)
 2.54, the engine family behind Safari. It's tuned for the device's 1 GB of RAM and PowerVR GPU, and
-you drive it with the gamepad, a USB/Bluetooth keyboard and mouse, or the on-screen keyboard.
+you drive it with the gamepad, a USB keyboard and mouse, or the on-screen keyboard.
+
+| | |
+|---|---|
+| ![Wikipedia article](docs/screenshots/article.png) | ![YouTube page after playing in mpv, with the Play in mpv button](docs/screenshots/youtube.jpg) |
+| ![SELECT menu](docs/screenshots/menu.png) | ![Address bar with the Ukrainian on-screen keyboard](docs/screenshots/keyboard-ua.png) |
+
+<p align="center"><img src="docs/screenshots/portrait.png" alt="Portrait mode" width="270"></p>
 
 ## ✨ Features
 
@@ -19,12 +26,12 @@ you drive it with the gamepad, a USB/Bluetooth keyboard and mouse, or the on-scr
 - 🛡️ **Ad and tracker blocking**: EasyList + EasyPrivacy (~94,000 rules) built into WebKit, pages load
   faster and use far less memory.
 - 🎮 **Gamepad-first**: analog pointer, smooth scrolling, and an Android-style on-screen keyboard.
-- ⌨️🖱️ **USB/Bluetooth keyboard and mouse**: plug and play, with shortcuts and layout switching.
+- ⌨️🖱️ **USB keyboard and mouse**: plug and play, with shortcuts and layout switching.
 - 🌍 **Any keyboard layout**: all XKB layouts (Ukrainian, German, French, Dvorak…) for both keyboards,
   switched with one key.
 - 📱 **Portrait mode**: turn the device sideways for long articles and feeds, like mpv does for portrait
   videos.
-- ⬇️ **Downloads**: save files, links and page media to the SD card, and play videos from there.
+- ⬇️ **Downloads**: save files, links and page media to the SD card, and play videos and audios from there.
 - 🕘 **History, home page, search**: start on your home page, the last page or the address bar; anything
   that isn't a URL is searched.
 - 🍪 **Stays logged in**: cookies and site storage are kept across restarts.
@@ -41,7 +48,7 @@ You need a TrimUI Smart Pro with the stock firmware and Wi-Fi, and about 260 MB 
 3. Start **WPE Browser** from the **Apps** menu.
 
 The first start takes ~25 seconds longer: the ad-block list is compiled once in the background. Your
-settings live in `Apps/WPE/settings.conf` and are never overwritten by updates. Browsing data (cookies,
+settings live in `Apps/WPE/settings.conf`. Browsing data (cookies,
 cache, history) is kept on the device's internal storage in `/mnt/UDISK/wpe-browser`.
 
 To **update**, unpack a newer release over the old folder; `settings.conf` keeps your values. To
@@ -85,7 +92,7 @@ doesn't click).
 In the address bar the current URL opens selected (typing replaces it). Up from the top row reaches **✕**:
 A clears the line, left/right move the cursor.
 
-**Keyboard and mouse** (USB or Bluetooth, picked up when connected):
+**Keyboard and mouse** (USB, picked up when connected):
 
 | Key | Action |
 |---|---|
@@ -150,8 +157,12 @@ Keep a Latin layout such as `us` in the list for typing addresses.
 [yt-dlp](https://github.com/yt-dlp/yt-dlp) · [EasyList / EasyPrivacy](https://easylist.to/) ·
 [libxkbcommon](https://xkbcommon.org/) and [xkeyboard-config](https://gitlab.freedesktop.org/xkeyboard-config/xkeyboard-config) ·
 [SDL2](https://www.libsdl.org/) (TrimUI's [toolchain SDK](https://github.com/trimui/toolchain_sdk_smartpro)) ·
-[DejaVu fonts](https://dejavu-fonts.github.io/). The mpv setup and yt-dlp handling come from the
-youtube-tsp YouTube client for the same device.
+[DejaVu fonts](https://dejavu-fonts.github.io/).
+
+## License
+
+[MIT](LICENSE). Third-party components (WPE WebKit, mpv, FFmpeg, yt-dlp, the bundled libraries and data)
+keep their own licenses.
 
 ---
 
@@ -307,8 +318,7 @@ needs hard links, which exFAT lacks, so it lives on the internal ext4 partition)
 | `runtime/yt-dlp` *(not in git)* | `yt-dlp_linux_aarch64` from [yt-dlp releases](https://github.com/yt-dlp/yt-dlp/releases/latest). Only the initial copy: the browser updates `bin/yt-dlp` on the device itself |
 | `runtime/mpv/mpv`, `runtime/mpv/lib/` *(not in git)* | the separate **mpv-trimui-build** project (`build.sh` → `dist/`): mpv 0.36 with an SDL2 GLES context for the GE8300 and its libraries (FFmpeg 6.1, libass, dav1d, …, built against the device's glibc), including the **Allwinner Cedar hardware H.264 decoder** (`h264_cedar` in libavcodec plus the libcedarc libraries `libvdecoder`, `libVE`, `libvideoengine`, `libawh264`, …) |
 
-`runtime/mpv/mpv.conf`, `input.conf` and `ca-certificates.crt` are tracked: the browser's own config
-(originally from the youtube-tsp client); `mpv.conf` adds `vd=h264_cedar,`. `package.sh` copies
+`runtime/mpv/mpv.conf`, `input.conf` and `ca-certificates.crt` are tracked: the browser's own config; `mpv.conf` adds `vd=h264_cedar,`. `package.sh` copies
 `runtime/mpv/` to `mpv/` as is (no bundling or patching).
 
 ## Building
@@ -482,15 +492,15 @@ WebKit is built with WebGL (ANGLE, translating to the device's GLES 3.2). It is 
 - a WebGL canvas shares its texture with WebKit's compositor and reaches the screen through the
   zero-copy path: a full-screen animated shader (1279×648) runs at **47 fps**;
 - it costs memory: +16 MB in the web process for that one small scene, more for real 3D content;
-- some sites switch to much heavier versions when WebGL is available (Google Maps' vector map instead of
-  image tiles), which matters with 1 GB of RAM;
+- some sites may switch to heavier versions when WebGL is available, which matters with 1 GB of RAM.
+  Google Maps doesn't: checked on the device with `WEBGL=1`, it serves its image-tile version (a single
+  2D canvas, no WebGL context) to both the mobile and the desktop user agent;
 - the reported GPU is "Apple GPU": WebKit masks the real renderer name behind the iPhone user agent.
 
 ### Video playback in mpv
 
-Playback (`app/player.c`) uses the bundled `mpv/mpv` and `bin/yt-dlp`, with the same options as the
-youtube-tsp client (`--no-ytdl --config-dir=mpv`, subtitle fonts from `share/fonts`; yt-dlp format: H.264 +
-AAC up to 720p, the screen's resolution). H.264 is decoded by the Allwinner hardware decoder
+Playback (`app/player.c`) uses the bundled `mpv/mpv` and `bin/yt-dlp`, with the options `--no-ytdl --config-dir=mpv`, subtitle fonts from `share/fonts`; yt-dlp format: H.264 +
+AAC up to 720p, the screen's resolution. H.264 is decoded by the Allwinner hardware decoder
 (`vd=h264_cedar,` in `mpv.conf`); other codecs and H.264 the hardware can't do (10-bit, 4:2:2, 4:4:4) fall
 back to FFmpeg's software decoders automatically. Measured with mpv on screen (20 s clips, whole system,
 4 cores):
@@ -540,7 +550,7 @@ back to FFmpeg's software decoders automatically. Measured with mpv on screen (2
   processes them: `yt-dlp -g` returns a single fragment (the last few seconds), and mpv can't join
   fragments without durations, so the browser says so instead of playing those seconds.
 
-**yt-dlp updates** (`app/ytdlp.c`, ported from youtube-tsp's `src/updater.c`). YouTube changes break
+**yt-dlp updates** (`app/ytdlp.c`). YouTube changes break
 old yt-dlp versions, so 30 s after start the browser compares `bin/yt-dlp --version` (cached in
 `bin/yt-dlp.version` until the binary changes) with the latest GitHub release (looked up at most once a
 day, cached in `bin/yt-dlp.checked`):
@@ -586,7 +596,7 @@ Dockerfile, toolchain-aarch64.cmake   cross-compilation container and CMake tool
 patches/                              WebKit patches (see above)
 app/
   browser.c                           UI process: WPEPlatform on SDL2, input, menu, memory watchdog
-  hid.c / hid.h                       USB/Bluetooth keyboards and mice (evdev), XKB layouts
+  hid.c / hid.h                       USB keyboards and mice (evdev), XKB layouts
   osk.c / osk.h                       on-screen keyboard
   menu.c / menu.h                     SELECT menu, prompts, status strip
   downloads.c / downloads.h           download manager and wpe-tsp://downloads page
@@ -643,3 +653,4 @@ dist/WPE                              the installable app (generated)
 - **Debugging a crash:** WebKit is built without debug info. The unstripped
   `build/stage/mnt/SDCARD/Apps/WPE/lib/libWPEWebKit-2.0.so.1.*` still has symbols, so
   `aarch64-linux-gnu-addr2line -f -C -e <lib> <offset>` (inside the container) resolves backtrace offsets.
+
