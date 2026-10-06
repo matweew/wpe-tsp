@@ -121,7 +121,7 @@ Edit `Apps/WPE/settings.conf` on the SD card; changes apply at the next start.
 |---|---|---|
 | `HOME_URL` | *(empty)* | Home page (SELECT → Home); empty = blank page |
 | `START_PAGE` | `home` | At start: `home`, `last` (last visited page) or `address` (open the address bar) |
-| `SEARCH_URL` | `https://www.google.com/search?q=` | Search engine for address-bar text that isn't a URL |
+| `SEARCH_URL` | `https://www.google.com/search?q=` | Search engine for address-bar text that isn't a URL (the query is appended), e.g. DuckDuckGo: `https://duckduckgo.com/?q=` |
 | `KEYBOARD_LAYOUTS` | `us,ua,ru` | Keyboard layouts, see below |
 | `SCALE` | `1.5` | Page zoom: 1.5 = text 1.5× larger |
 | `USER_AGENT` | `mobile` | `mobile` (iPhone Safari, lighter sites), `desktop`, or a full user-agent string |
