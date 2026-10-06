@@ -173,14 +173,6 @@ bool menu_handle_event(const SDL_Event *ev)
             }
         }
         return true;
-    case SDL_KEYDOWN:
-        switch (ev->key.keysym.sym) {
-        case SDLK_UP: move(-1); return true;
-        case SDLK_DOWN: move(1); return true;
-        case SDLK_RETURN: activate_selected(); return true;
-        case SDLK_ESCAPE: dismiss(); return true;
-        }
-        return false;
     }
     return false;
 }

@@ -751,17 +751,6 @@ bool osk_handle_event(const SDL_Event *ev)
         }
         return true;
     }
-    case SDL_KEYDOWN: /* USB keyboard / testing */
-        switch (ev->key.keysym.sym) {
-        case SDLK_UP: move_vertical(-1); return true;
-        case SDLK_DOWN: move_vertical(1); return true;
-        case SDLK_LEFT: move_horizontal(-1); return true;
-        case SDLK_RIGHT: move_horizontal(1); return true;
-        case SDLK_RETURN: press_selected(); return true;
-        case SDLK_BACKSPACE: backspace(); return true;
-        case SDLK_ESCAPE: osk_hide(); if (osk.cb.closed) osk.cb.closed(osk.cb.user_data); return true;
-        }
-        return false;
     }
     return false;
 }
