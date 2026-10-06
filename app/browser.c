@@ -112,7 +112,7 @@ typedef struct {
     guint swallow_mouse;        /* mouse buttons (bit n = button n) whose press only revealed the pointer */
     char *link_under_pointer;   /* from WebKit's hit test, for "Save link under pointer" */
     gboolean editable_under_pointer; /* from WebKit's hit test: a text field / editable area */
-    WebKitPolicyDecision *pending_download; /* response waiting for the download prompt */
+    gboolean download_prompt;   /* the download prompt is open (its download runs unconfirmed) */
     GPtrArray *media_uris;      /* candidates shown by "Save video/audio from this page" */
     gboolean play_youtube;      /* open YouTube video pages in mpv (PLAY_YOUTUBE_IN_MPV) */
     char *video_page;           /* watch URL of the YouTube page last sent to mpv (canonical) */
@@ -1415,20 +1415,14 @@ static char *pending_uri;
 static void download_prompt_answered(int index, void *user_data)
 {
     (void)user_data;
-    WebKitPolicyDecision *decision = app.pending_download;
-    app.pending_download = NULL;
-    if (!decision)
+    if (!app.download_prompt)
         return;
+    app.download_prompt = FALSE;
     int download_index = pending_playable ? 1 : 0;
-    if (pending_playable && index == 0) {
-        webkit_policy_decision_ignore(decision);
+    downloads_confirm(index == download_index);
+    if (pending_playable && index == 0)
         player_play_url(pending_uri);
-    } else if (index == download_index)
-        webkit_policy_decision_download(decision);
-    else
-        webkit_policy_decision_ignore(decision);
     g_clear_pointer(&pending_uri, g_free);
-    g_object_unref(decision);
     app.needs_present = TRUE;
 }
 
@@ -1440,7 +1434,8 @@ static gboolean response_is_attachment(WebKitURIResponse *response)
 }
 
 /* A page navigated to something the browser can't display (video, archive, ...) or that the
- * server marks as an attachment: ask before downloading it. */
+ * server marks as an attachment: ask before downloading it. The download already runs (hidden)
+ * while the prompt is open: some servers drop a connection that isn't read for ~15 s. */
 static gboolean on_decide_policy(WebKitWebView *web_view, WebKitPolicyDecision *decision,
                                  WebKitPolicyDecisionType type, gpointer user_data)
 {
@@ -1453,7 +1448,7 @@ static gboolean on_decide_policy(WebKitWebView *web_view, WebKitPolicyDecision *
         return FALSE;
     if (webkit_response_policy_decision_is_mime_type_supported(response_decision) && !response_is_attachment(response))
         return FALSE;
-    if (app.pending_download) { /* already asking about another one */
+    if (app.download_prompt) { /* already asking about another one */
         webkit_policy_decision_ignore(decision);
         return TRUE;
     }
@@ -1471,7 +1466,8 @@ static gboolean on_decide_policy(WebKitWebView *web_view, WebKitPolicyDecision *
     char *title = g_strdup_printf(pending_playable ? "Play or download %s?" : "Download %s?", name);
     static const char *const download_items[] = { "Download", "Cancel", NULL };
     static const char *const media_items[] = { "Play", "Download", "Cancel", NULL };
-    app.pending_download = g_object_ref(decision);
+    app.download_prompt = TRUE;
+    downloads_start_unconfirmed(decision, pending_uri);
     menu_open(title, subtitle, pending_playable ? media_items : download_items, download_prompt_answered, NULL);
     app.needs_present = TRUE;
     g_free(title); g_free(subtitle); g_free(free_space); g_free(size); g_free(name);

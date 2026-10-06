@@ -27,6 +27,8 @@ typedef struct {
     DownloadState state;
     guint64 received;
     guint64 total;              /* 0 if unknown */
+    gboolean hidden;            /* from the download prompt, not answered yet */
+    gboolean discard;           /* prompt answered Cancel/Play: drop the item once WebKit is done */
 } Item;
 
 static struct {
@@ -40,6 +42,9 @@ static struct {
     Item *notice;               /* finished/failed item shown in the status strip */
     gint64 notice_until;
     guint notice_timer;
+    char *expected_uri;         /* the prompt's download, until "download-started" (async) */
+    int early_answer;           /* prompt answered before that: 1 keep, 0 discard, -1 not yet */
+    Item *unconfirmed;          /* the prompt's download, waiting for the answer */
 } dl;
 
 static void item_free(gpointer data)
@@ -235,7 +240,40 @@ static void on_finished(WebKitDownload *download, gpointer user_data)
     g_signal_handlers_disconnect_by_data(download, item);
     g_object_unref(item->download);
     item->download = NULL;
-    if (item->state != DL_CANCELLED)
+    if (item->discard) {
+        g_ptr_array_remove(dl.items, item);
+        notify_changed(TRUE);
+    } else if (item->hidden)
+        ; /* the result is shown when the prompt is answered */
+    else if (item->state != DL_CANCELLED)
+        show_notice(item);
+    else
+        notify_changed(TRUE);
+}
+
+/* Prompt answered Cancel/Play: stop the download and delete what it saved */
+static void discard_item(Item *item)
+{
+    item->discard = TRUE;
+    if (item->download) { /* "failed" deletes the file, "finished" removes the item */
+        webkit_download_cancel(item->download);
+        return;
+    }
+    if (item->state == DL_DONE && item->path)
+        g_unlink(item->path);
+    g_ptr_array_remove(dl.items, item);
+    notify_changed(TRUE);
+}
+
+static void apply_answer(Item *item, gboolean keep)
+{
+    dl.unconfirmed = NULL;
+    if (!keep) {
+        discard_item(item);
+        return;
+    }
+    item->hidden = FALSE;
+    if (!item->download && item->state != DL_CANCELLED) /* finished or failed while the prompt was open */
         show_notice(item);
     else
         notify_changed(TRUE);
@@ -249,13 +287,22 @@ static void on_download_started(WebKitNetworkSession *session, WebKitDownload *d
     item->download = g_object_ref(download);
     item->state = DL_ACTIVE;
     WebKitURIRequest *request = webkit_download_get_request(download);
-    item->name = g_path_get_basename(request ? webkit_uri_request_get_uri(request) : "download");
+    const char *uri = request ? webkit_uri_request_get_uri(request) : NULL;
+    item->name = g_path_get_basename(uri ? uri : "download");
+    if (dl.expected_uri && uri && !strcmp(uri, dl.expected_uri)) {
+        g_clear_pointer(&dl.expected_uri, g_free);
+        item->hidden = TRUE;
+        dl.unconfirmed = item;
+    }
     g_ptr_array_add(dl.items, item);
     g_signal_connect(download, "decide-destination", G_CALLBACK(on_decide_destination), item);
     g_signal_connect(download, "received-data", G_CALLBACK(on_received_data), item);
     g_signal_connect(download, "failed", G_CALLBACK(on_failed), item);
     g_signal_connect(download, "finished", G_CALLBACK(on_finished), item);
-    notify_changed(TRUE);
+    if (item->hidden && dl.early_answer >= 0)
+        apply_answer(item, dl.early_answer);
+    else
+        notify_changed(TRUE);
 }
 
 /* Downloads interrupted by the browser being killed (power off, an update) leave WebKit's partial
@@ -306,6 +353,22 @@ void downloads_start(const char *uri)
         g_object_unref(download); /* tracked through "download-started" */
 }
 
+void downloads_start_unconfirmed(WebKitPolicyDecision *decision, const char *uri)
+{
+    g_free(dl.expected_uri);
+    dl.expected_uri = g_strdup(uri);
+    dl.early_answer = -1;
+    webkit_policy_decision_download(decision);
+}
+
+void downloads_confirm(gboolean keep)
+{
+    if (dl.unconfirmed)
+        apply_answer(dl.unconfirmed, keep);
+    else if (dl.expected_uri)
+        dl.early_answer = keep ? 1 : 0;
+}
+
 static double item_progress(const Item *item)
 {
     return item->total ? MIN(1.0, (double)item->received / (double)item->total) : -1;
@@ -320,7 +383,7 @@ char *downloads_status(double *progress)
     guint n_active = 0;
     for (guint i = 0; i < dl.items->len; i++) {
         Item *item = g_ptr_array_index(dl.items, i);
-        if (item->state == DL_ACTIVE) {
+        if (item->state == DL_ACTIVE && !item->hidden) {
             if (!active)
                 active = item;
             n_active++;
@@ -442,6 +505,8 @@ static char *downloads_page_html(void)
 
     for (guint n = dl.items->len; n > 0; n--) { /* newest first */
         Item *item = g_ptr_array_index(dl.items, n - 1);
+        if (item->hidden || item->discard)
+            continue;
         char *name = g_markup_escape_text(item->name ? item->name : "download", -1);
         char *got = downloads_format_size((gint64)item->received);
         char *status;
@@ -476,8 +541,10 @@ static char *downloads_page_html(void)
         g_free(name);
     }
     gboolean session_entries = FALSE;
-    for (guint i = 0; i < dl.items->len; i++)
-        session_entries |= ((Item *)g_ptr_array_index(dl.items, i))->state != DL_DONE;
+    for (guint i = 0; i < dl.items->len; i++) {
+        Item *item = g_ptr_array_index(dl.items, i);
+        session_entries |= item->state != DL_DONE && !item->hidden && !item->discard;
+    }
 
     GPtrArray *files = saved_files();
     if (files->len)
@@ -536,7 +603,7 @@ char *downloads_handle_page(const char *uri)
     } else if (!strcmp(action, "/clear")) {
         for (guint i = dl.items->len; i > 0; i--) {
             Item *item = g_ptr_array_index(dl.items, i - 1);
-            if (item->state != DL_ACTIVE) {
+            if (item->state != DL_ACTIVE && !item->hidden && !item->discard) {
                 if (dl.notice == item)
                     dl.notice = NULL;
                 g_ptr_array_remove_index(dl.items, i - 1);

@@ -21,6 +21,13 @@ const char *downloads_dir(void);
 /* Start downloading a URL right away (user explicitly chose it). */
 void downloads_start(const char *uri);
 
+/* Download prompt: the response starts downloading while the prompt is shown, hidden until
+ * downloads_confirm(). (Some servers, e.g. ftp.acc.umu.se, drop a connection that isn't read
+ * for ~15 s, so the response can't simply wait for the answer.) */
+void downloads_start_unconfirmed(WebKitPolicyDecision *decision, const char *uri);
+/* The prompt's answer: keep = show it (and its result), else cancel it and delete the file. */
+void downloads_confirm(gboolean keep);
+
 /* Status strip: returns a newly allocated line ("name — 45% · 12.3 / 30.1 MB", "Saved: …") and
  * the progress (0..1, or <0 for none), or NULL when there is nothing to show. */
 char *downloads_status(double *progress);

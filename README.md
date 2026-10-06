@@ -523,7 +523,11 @@ Downloads (`app/downloads.c`) are saved to `DOWNLOAD_DIR`. WebKit streams them s
 card, so large files don't use RAM. There are three ways to start one:
 - **Clicking a link to a file the browser can't show** (video, audio, archives…), or one the server sends as
   an attachment, opens a prompt: *Download name? — size · type · free space* → Download / Cancel
-  (`decide-policy` → `webkit_policy_decision_download()`).
+  (`decide-policy` → `webkit_policy_decision_download()`). The download starts right away, hidden while
+  the prompt is open; Cancel (or Play) stops it and deletes what it saved. Holding the response until the
+  answer doesn't work: WebKit stops reading the connection meanwhile, and some servers drop a connection
+  that isn't read for ~15 s (Debian's mirror `ftp.acc.umu.se` does; it then failed with "Error decoding
+  the received TLS packet", GnuTLS's error for a record cut off by the closed connection).
 - **SELECT → Downloads → Save link under pointer** saves the target of the link under the pointer (WebKit's
   hit test), even an ordinary page.
 - **SELECT → Downloads → Save video/audio from this page** lists the `<video>`/`<audio>`/`<source>`
