@@ -158,7 +158,7 @@ Keep a Latin layout such as `us` in the list for typing addresses.
 
 ## 🙏 Credits
 
-[WPE WebKit](https://wpewebkit.org/) · [mpv](https://mpv.io/) · [FFmpeg](https://ffmpeg.org/) ·
+[WPE WebKit](https://wpewebkit.org/) · [mpv](https://mpv.io/) (built by [mpv-tsp](https://github.com/matweew/mpv-tsp)) · [FFmpeg](https://ffmpeg.org/) ·
 [yt-dlp](https://github.com/yt-dlp/yt-dlp) · [EasyList / EasyPrivacy](https://easylist.to/) ·
 [libxkbcommon](https://xkbcommon.org/) and [xkeyboard-config](https://gitlab.freedesktop.org/xkeyboard-config/xkeyboard-config) ·
 [SDL2](https://www.libsdl.org/) (TrimUI's [toolchain SDK](https://github.com/trimui/toolchain_sdk_smartpro)) ·
@@ -322,7 +322,7 @@ needs hard links, which exFAT lacks, so it lives on the internal ext4 partition)
 | EasyList, EasyPrivacy | [easylist.to](https://easylist.to/), downloaded by `scripts/package.sh` |
 | XKB layouts | Debian's `xkb-data` ([xkeyboard-config](https://gitlab.freedesktop.org/xkeyboard-config/xkeyboard-config)), compiled with `xkbcli` from `libxkbcommon-tools` |
 | `runtime/yt-dlp` *(not in git)* | `yt-dlp_linux_aarch64` from [yt-dlp releases](https://github.com/yt-dlp/yt-dlp/releases/latest). Only the initial copy: the browser updates `bin/yt-dlp` on the device itself |
-| `runtime/mpv/mpv`, `runtime/mpv/lib/` *(not in git)* | the separate **mpv-trimui-build** project (`build.sh` → `dist/`): mpv 0.36 with an SDL2 GLES context for the GE8300 and its libraries (FFmpeg 6.1, libass, dav1d, …, built against the device's glibc), including the **Allwinner Cedar hardware H.264 decoder** (`h264_cedar` in libavcodec plus the libcedarc libraries `libvdecoder`, `libVE`, `libvideoengine`, `libawh264`, …) |
+| `runtime/mpv/mpv`, `runtime/mpv/lib/` *(not in git)* | [mpv-tsp](https://github.com/matweew/mpv-tsp) (`build.sh` → `dist/`): mpv 0.36 with an SDL2 GLES context for the GE8300 and its libraries (FFmpeg 6.1, libass, dav1d, OpenSSL 3, …, built against the device's glibc), including the **Allwinner Cedar hardware H.264 decoder** (`h264_cedar` in libavcodec plus the libcedarc libraries). An LGPL build of FFmpeg and mpv, so it may link the proprietary libcedarc and be redistributed |
 
 `runtime/mpv/mpv.conf`, `input.conf` and `ca-certificates.crt` are tracked: the browser's own config; `mpv.conf` adds `vd=h264_cedar,`. `package.sh` copies
 `runtime/mpv/` to `mpv/` as is (no bundling or patching).
