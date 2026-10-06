@@ -1,0 +1,212 @@
+--- a/Source/WebKit/UIProcess/glib/WebProcessPoolGLib.cpp
++++ b/Source/WebKit/UIProcess/glib/WebProcessPoolGLib.cpp
+@@ -204,6 +204,9 @@
+ #if OS(ANDROID)
+         parameters.rendererBufferTransportMode.add(RendererBufferTransportMode::Hardware);
+ #endif
++        // Devices without GBM can still share DMA-bufs allocated from ION (see AcceleratedSurface).
++        if (g_getenv("WEBKIT_DMABUF_ION"))
++            parameters.rendererBufferTransportMode.add(RendererBufferTransportMode::Hardware);
+         parameters.rendererBufferTransportMode.add(RendererBufferTransportMode::SharedMemory);
+     }
+ #endif
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.h
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.h
+@@ -334,6 +334,24 @@
+ 
+         Ref<WebCore::BitmapTexture> m_texture;
+     };
++
++    // Render target backed by a DMA-buf allocated from the Android ION allocator, for
++    // drivers that import DMA-bufs (EGL_EXT_image_dma_buf_import) but can neither export
++    // them (EGL_MESA_image_dma_buf_export) nor allocate them via GBM. Enabled by setting
++    // WEBKIT_DMABUF_ION to the ION heap id mask to allocate from (e.g. 1).
++    class RenderTargetION final : public RenderTargetShareableBuffer {
++    public:
++        static bool isAvailable();
++        static std::unique_ptr<RenderTarget> create(AcceleratedSurface&, const WebCore::IntSize&);
++        RenderTargetION(AcceleratedSurface&, const WebCore::IntSize&, EGLImage, WebCore::DMABufBufferAttributes&&);
++        ~RenderTargetION();
++
++    private:
++        bool supportsExplicitSync() const override { return true; }
++
++        EGLImage m_image { nullptr };
++        unsigned m_texture { 0 };
++    };
+ #endif // PLATFORM(GTK) || ENABLE(WPE_PLATFORM)
+ 
+ #if USE(WPE_RENDERER)
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp
+@@ -58,6 +58,7 @@
+ #include "AcceleratedSurfaceMessages.h"
+ #include <WebCore/DMABufBuffer.h>
+ #include <epoxy/egl.h>
++#include <sys/ioctl.h>
+ #endif
+ 
+ #if USE(LIBEPOXY)
+@@ -512,6 +513,140 @@
+ 
+ AcceleratedSurface::RenderTargetTexture::~RenderTargetTexture() = default;
+ 
++// From drm_fourcc.h, for builds without libdrm.
++static constexpr uint32_t ionBufferFormat = 0x34325241; // DRM_FORMAT_ARGB8888, fourcc 'AR24'
++static constexpr uint64_t ionBufferModifier = 0x00ffffffffffffffULL; // DRM_FORMAT_MOD_INVALID
++
++// ION uAPI: the legacy interface (kernels <= 4.11, allocations return a handle that is then
++// shared as a DMA-buf fd) and the current one (allocations return the fd directly).
++struct IONAllocationDataLegacy {
++    size_t len;
++    size_t align;
++    unsigned heapIDMask;
++    unsigned flags;
++    int handle;
++};
++struct IONFdData {
++    int handle;
++    int fd;
++};
++struct IONHandleData {
++    int handle;
++};
++struct IONAllocationData {
++    uint64_t len;
++    uint32_t heapIDMask;
++    uint32_t flags;
++    uint32_t fd;
++    uint32_t unused;
++};
++#define WEBKIT_ION_IOC_ALLOC_LEGACY _IOWR('I', 0, struct IONAllocationDataLegacy)
++#define WEBKIT_ION_IOC_FREE_LEGACY _IOWR('I', 1, struct IONHandleData)
++#define WEBKIT_ION_IOC_SHARE_LEGACY _IOWR('I', 4, struct IONFdData)
++#define WEBKIT_ION_IOC_ALLOC _IOWR('I', 0, struct IONAllocationData)
++
++static int ionDevice()
++{
++    static int device = [] {
++        auto& extensions = PlatformDisplay::sharedDisplay().eglExtensions();
++        if (!getenv("WEBKIT_DMABUF_ION") || !extensions.EXT_image_dma_buf_import)
++            return -1;
++        return open("/dev/ion", O_RDWR | O_CLOEXEC);
++    }();
++    return device;
++}
++
++static UnixFileDescriptor ionAllocate(size_t length)
++{
++    unsigned heapMask = strtoul(getenv("WEBKIT_DMABUF_ION"), nullptr, 0);
++    if (!heapMask)
++        heapMask = 1;
++
++    IONAllocationDataLegacy legacy = { length, 4096, heapMask, 0, 0 };
++    if (!ioctl(ionDevice(), WEBKIT_ION_IOC_ALLOC_LEGACY, &legacy)) {
++        IONFdData share = { legacy.handle, -1 };
++        int result = ioctl(ionDevice(), WEBKIT_ION_IOC_SHARE_LEGACY, &share);
++        // The DMA-buf keeps the memory alive after the handle is gone.
++        IONHandleData handle = { legacy.handle };
++        ioctl(ionDevice(), WEBKIT_ION_IOC_FREE_LEGACY, &handle);
++        return UnixFileDescriptor(result ? -1 : share.fd, UnixFileDescriptor::Adopt);
++    }
++
++    IONAllocationData data = { length, heapMask, 0, 0, 0 };
++    if (!ioctl(ionDevice(), WEBKIT_ION_IOC_ALLOC, &data))
++        return UnixFileDescriptor(static_cast<int>(data.fd), UnixFileDescriptor::Adopt);
++    return { };
++}
++
++bool AcceleratedSurface::RenderTargetION::isAvailable()
++{
++    return ionDevice() >= 0;
++}
++
++std::unique_ptr<AcceleratedSurface::RenderTarget> AcceleratedSurface::RenderTargetION::create(AcceleratedSurface& surface, const IntSize& size)
++{
++    // GPUs want aligned rows (the PowerVR GE8300 rejects e.g. 1279 * 4 bytes): pad to 32 pixels.
++    uint32_t stride = ((size.width() + 31) & ~31) * 4;
++    auto fd = ionAllocate(static_cast<size_t>(stride) * size.height());
++    if (!fd) {
++        WTFLogAlways("Failed to allocate ION buffer of size %dx%d: %s", size.width(), size.height(), safeStrerror(errno).data());
++        return nullptr;
++    }
++
++    DMABufBufferAttributes attributes;
++    attributes.size = size;
++    attributes.fourcc = ionBufferFormat;
++    attributes.fds.append(WTF::move(fd));
++    attributes.offsets.append(0);
++    attributes.strides.append(stride);
++    attributes.modifier = ionBufferModifier;
++
++    // No modifier: the buffer is linear, which is what the driver assumes without one.
++    Vector<EGLAttrib> imageAttributes {
++        EGL_WIDTH, size.width(),
++        EGL_HEIGHT, size.height(),
++        EGL_LINUX_DRM_FOURCC_EXT, ionBufferFormat,
++        EGL_DMA_BUF_PLANE0_FD_EXT, attributes.fds[0].value(),
++        EGL_DMA_BUF_PLANE0_OFFSET_EXT, 0,
++        EGL_DMA_BUF_PLANE0_PITCH_EXT, stride,
++        EGL_NONE
++    };
++    auto image = PlatformDisplay::sharedDisplay().createEGLImage(EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, nullptr, imageAttributes);
++    if (!image) {
++        WTFLogAlways("Failed to create EGL image for ION buffer of size %dx%d", size.width(), size.height());
++        return nullptr;
++    }
++
++    return makeUnique<RenderTargetION>(surface, size, image, WTF::move(attributes));
++}
++
++AcceleratedSurface::RenderTargetION::RenderTargetION(AcceleratedSurface& surface, const IntSize& size, EGLImage image, DMABufBufferAttributes&& attributes)
++    : RenderTargetShareableBuffer(surface, size)
++    , m_image(image)
++{
++    // Texture rather than renderbuffer storage: the path the PowerVR driver is known to support.
++    glGenTextures(1, &m_texture);
++    glBindTexture(GL_TEXTURE_2D, m_texture);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++    glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, m_image);
++    glBindTexture(GL_TEXTURE_2D, 0);
++    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_texture, 0);
++    if (m_surface->useSkia())
++        createSkiaSurfaceForFramebuffer(m_fbo);
++
++    WebProcess::singleton().parentProcessConnection()->send(Messages::AcceleratedBackingStore::DidCreateDMABufBuffer(m_id, WTF::move(attributes), RendererBufferFormat::Usage::Rendering), m_surface->surfaceID());
++}
++
++AcceleratedSurface::RenderTargetION::~RenderTargetION()
++{
++    m_skiaSurface = nullptr;
++    if (m_texture)
++        glDeleteTextures(1, &m_texture);
++    if (m_image)
++        PlatformDisplay::sharedDisplay().destroyEGLImage(m_image);
++}
++
+ #endif // PLATFORM(GTK) || ENABLE(WPE_PLATFORM)
+ 
+ #if USE(WPE_RENDERER)
+@@ -601,7 +736,7 @@
+     switch (display.type()) {
+ #if PLATFORM(GTK) || ENABLE(WPE_PLATFORM)
+     case PlatformDisplay::Type::Surfaceless:
+-        if (display.eglExtensions().MESA_image_dma_buf_export && WebProcess::singleton().rendererBufferTransportMode().contains(RendererBufferTransportMode::Hardware))
++        if ((display.eglExtensions().MESA_image_dma_buf_export || RenderTargetION::isAvailable()) && WebProcess::singleton().rendererBufferTransportMode().contains(RendererBufferTransportMode::Hardware))
+             m_type = Type::Texture;
+         else
+             m_type = Type::SharedMemory;
+@@ -769,6 +904,12 @@
+     }
+ #endif
+     case Type::Texture:
++        if (!PlatformDisplay::sharedDisplay().eglExtensions().MESA_image_dma_buf_export) {
++            if (auto target = RenderTargetION::create(m_surface.get(), m_size))
++                return target;
++            // Rendering into nothing would leave the page blank: copy frames instead.
++            return RenderTargetSHMImage::create(m_surface.get(), m_size);
++        }
+         return RenderTargetTexture::create(m_surface.get(), m_size);
+     case Type::SharedMemory:
+         return RenderTargetSHMImage::create(m_surface.get(), m_size);

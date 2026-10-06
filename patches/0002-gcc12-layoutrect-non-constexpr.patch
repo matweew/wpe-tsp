@@ -1,0 +1,18 @@
+--- a/Source/WebCore/platform/graphics/LayoutRect.h	2026-08-05 00:55:03.242556800 +0300
++++ b/Source/WebCore/platform/graphics/LayoutRect.h	2026-10-03 22:58:43.245140109 +0300
+@@ -217,13 +217,13 @@
+     LayoutRect transposedRect() const { return LayoutRect(m_location.transposedPoint(), m_size.transposedSize()); }
+     bool isInfinite() const;
+ 
+-    static constexpr LayoutRect infiniteRect()
++    static LayoutRect infiniteRect()
+     {
+         // Return a rect that is slightly smaller than the true max rect to allow pixelSnapping to round up to the nearest IntRect without overflowing.
+         return LayoutRect(LayoutUnit::nearlyMin() / 2, LayoutUnit::nearlyMin() / 2, LayoutUnit::nearlyMax(), LayoutUnit::nearlyMax());
+     }
+ 
+-    static constexpr LayoutRect renderableInfiniteRect()
++    static LayoutRect renderableInfiniteRect()
+     {
+         // Return a infinite-like rect whose values are such that, when converted to float pixel values, they can reasonably represent device pixels.
+         return LayoutRect(LayoutUnit::nearlyMin() / 32, LayoutUnit::nearlyMin() / 32, LayoutUnit::nearlyMax() / 16, LayoutUnit::nearlyMax() / 16);

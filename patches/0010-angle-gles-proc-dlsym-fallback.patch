@@ -1,0 +1,19 @@
+--- a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/gl/egl/FunctionsEGLDL.cpp
++++ b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/gl/egl/FunctionsEGLDL.cpp
+@@ -69,7 +69,15 @@
+     {
+         return f;
+     }
+-    return dlsym(nativeEGLHandle, name);
++    f = dlsym(nativeEGLHandle, name);
++    if (f)
++    {
++        return f;
++    }
++    // Some EGL 1.4 drivers (PowerVR) return NULL from eglGetProcAddress for core GLES
++    // functions and don't export them from libEGL either: look them up in libGLESv2.
++    static void *nativeGLESHandle = dlopen("libGLESv2.so.2", RTLD_NOW);
++    return nativeGLESHandle ? dlsym(nativeGLESHandle, name) : nullptr;
+ }
+ 
+ }  // namespace rx

@@ -1,0 +1,6 @@
+{
+    "label": "WPE Browser",
+    "icon": "icon.png",
+    "launch": "launch.sh",
+    "description": "WPE WebKit web browser"
+}

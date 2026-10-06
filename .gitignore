@@ -1,0 +1,13 @@
+# Generated: see README.md "Repository layout"
+/src/
+/build/
+/dist/
+/.ccache/
+/sysroot-device/
+__pycache__/
+/.device
+*.kate-swp
+# Prebuilt third-party binaries (see README "Prebuilt binaries in runtime/"); their config is tracked
+/runtime/yt-dlp
+/runtime/mpv/mpv
+/runtime/mpv/lib/

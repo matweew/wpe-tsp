@@ -1,0 +1,18 @@
+--- a/Source/WebKit/UIProcess/API/glib/WebKitWebContext.cpp	2026-09-16 00:16:45.700080400 +0300
++++ b/Source/WebKit/UIProcess/API/glib/WebKitWebContext.cpp	2026-10-04 16:53:33.672497023 +0300
+@@ -437,11 +437,13 @@
+ 
+     Ref configuration = API::ProcessPoolConfiguration::create();
+     configuration->setInjectedBundlePath(FileSystem::stringFromFileSystemRepresentation(bundleFilename.get()));
+-    configuration->setUsesWebProcessCache(true);
++    // Low-memory devices (e.g. 1 GB handhelds) can't afford several web processes at once:
++    // allow embedders to keep a single one via environment variables.
++    configuration->setUsesWebProcessCache(!g_getenv("WEBKIT_DISABLE_WEB_PROCESS_CACHE"));
+ #if PLATFORM(GTK) && !USE(GTK4)
+     configuration->setProcessSwapsOnNavigation(priv->psonEnabled);
+ #else
+-    configuration->setProcessSwapsOnNavigation(true);
++    configuration->setProcessSwapsOnNavigation(!g_getenv("WEBKIT_DISABLE_PSON"));
+ #endif
+     if (priv->memoryPressureSettings) {
+         configuration->setMemoryPressureHandlerConfiguration(webkitMemoryPressureSettingsGetMemoryPressureHandlerConfiguration(priv->memoryPressureSettings));

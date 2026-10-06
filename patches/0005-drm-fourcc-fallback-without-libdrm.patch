@@ -1,0 +1,13 @@
+--- a/Source/WebKit/UIProcess/wpe/AcceleratedBackingStore.cpp	2026-07-27 18:40:40.404313300 +0300
++++ b/Source/WebKit/UIProcess/wpe/AcceleratedBackingStore.cpp	2026-10-03 23:34:49.252393623 +0300
+@@ -43,6 +43,10 @@
+ #include <drm_fourcc.h>
+ #endif
+ 
++#ifndef DRM_FORMAT_XRGB8888
++#define DRM_FORMAT_XRGB8888 0x34325258 /* fourcc 'XR24', for builds without libdrm */
++#endif
++
+ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+ #include <skia/core/SkColorSpace.h>
+ #include <skia/core/SkPixmap.h>

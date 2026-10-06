@@ -1,0 +1,25 @@
+--- a/Source/ThirdParty/skia/src/gpu/ganesh/gl/epoxy/GrGLMakeEpoxyEGLInterface.cpp	2026-07-27 18:40:34.909072400 +0300
++++ b/Source/ThirdParty/skia/src/gpu/ganesh/gl/epoxy/GrGLMakeEpoxyEGLInterface.cpp	2026-10-03 23:45:18.317489225 +0300
+@@ -12,6 +12,7 @@
+ #include "src/gpu/ganesh/gl/GrGLCoreFunctions.h"
+ #include "src/gpu/ganesh/gl/GrGLUtil.h"
+ 
++#include <dlfcn.h>
+ #include <epoxy/egl.h>
+ #include <epoxy/gl.h>
+ 
+@@ -21,7 +22,13 @@
+     #define M(X) if (0 == strcmp(#X, name)) { return (GrGLFuncPtr) epoxy_ ## X; }
+     GR_GL_CORE_FUNCTIONS_EACH(M)
+     #undef M
+-    return epoxy_eglGetProcAddress(name);
++    if (auto proc = epoxy_eglGetProcAddress(name))
++        return proc;
++    // EGL 1.4 drivers (e.g. PowerVR fbdev) only return extension functions from
++    // eglGetProcAddress; core GLES 3.x entry points (glGetStringi, ...) must be
++    // looked up in the GLES library itself.
++    static void* gles = dlopen("libGLESv2.so.2", RTLD_LAZY | RTLD_LOCAL);
++    return gles ? (GrGLFuncPtr)dlsym(gles, name) : nullptr;
+ }
+ 
+ namespace GrGLInterfaces {

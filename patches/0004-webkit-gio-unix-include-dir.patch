@@ -1,0 +1,13 @@
+--- a/Source/WebKit/PlatformWPE.cmake	2026-07-27 18:40:39.846386200 +0300
++++ b/Source/WebKit/PlatformWPE.cmake	2026-10-03 23:27:14.529159137 +0300
+@@ -469,6 +469,10 @@
+     Soup3::Soup3
+ )
+ 
++# GLib::GioUnix's include dir (gio-unix-2.0) is not propagated when cross-compiling
++# against Debian multiarch; add it explicitly.
++list(APPEND WebKit_SYSTEM_INCLUDE_DIRECTORIES ${PC_GLib_GioUnix_INCLUDE_DIRS})
++
+ if (ENABLE_WPE_LEGACY_API)
+     list(APPEND WebKit_LIBRARIES WPE::libwpe)
+ endif ()

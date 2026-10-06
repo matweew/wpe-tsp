@@ -1,0 +1,12 @@
+--- a/Source/ThirdParty/ANGLE/src/libANGLE/ResourceMap.h
++++ b/Source/ThirdParty/ANGLE/src/libANGLE/ResourceMap.h
+@@ -460,7 +460,8 @@
+     {
+         // This should only possible when lock is needed. Otherwise we could just grow
+         // mFlatResources.
+-        static_assert(kNeedsLock);
++        // A runtime check: GCC 12 evaluates static_assert in discarded if-constexpr branches.
++        ASSERT(kNeedsLock);
+         if (handle < kLocklessFlatResourcesLimit)
+         {
+             ResourceType **additionalResources =

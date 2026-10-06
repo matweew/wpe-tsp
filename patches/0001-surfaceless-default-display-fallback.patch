@@ -1,0 +1,23 @@
+--- a/Source/WebCore/platform/graphics/egl/PlatformDisplaySurfaceless.cpp	2026-10-03 22:34:22.264658118 +0300
++++ b/Source/WebCore/platform/graphics/egl/PlatformDisplaySurfaceless.cpp	2026-10-03 22:34:15.406895707 +0300
+@@ -34,8 +34,18 @@
+ std::unique_ptr<PlatformDisplaySurfaceless> PlatformDisplaySurfaceless::create()
+ {
+     const char* extensions = eglQueryString(nullptr, EGL_EXTENSIONS);
+-    if (!GLContext::isExtensionSupported(extensions, "EGL_MESA_platform_surfaceless"))
+-        return nullptr;
++    if (!GLContext::isExtensionSupported(extensions, "EGL_MESA_platform_surfaceless")) {
++        // EGL 1.4 drivers without client extensions (e.g. PowerVR fbdev blobs) can still
++        // create surfaceless contexts on the default display via EGL_KHR_surfaceless_context.
++        auto glDisplay = GLDisplay::create(eglGetDisplay(EGL_DEFAULT_DISPLAY));
++        if (!glDisplay || !glDisplay->extensions().KHR_surfaceless_context)
++            return nullptr;
++        auto display = std::unique_ptr<PlatformDisplaySurfaceless>(new PlatformDisplaySurfaceless(glDisplay.releaseNonNull()));
++#if ENABLE(WEBGL)
++        display->m_anglePlatform = 0;
++#endif
++        return display;
++    }
+ 
+     RefPtr<GLDisplay> glDisplay;
+     if (GLContext::isExtensionSupported(extensions, "EGL_EXT_platform_base"))
