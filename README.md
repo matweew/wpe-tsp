@@ -145,7 +145,10 @@ Keep a Latin layout such as `us` in the list for typing addresses.
 - **A video doesn't play:** the message at the bottom says why. YouTube changes often break old yt-dlp
   versions: accept the update prompt, or delete `Apps/WPE/bin/yt-dlp.checked` and restart to check now.
 - **A page is closed with "needs more memory":** the site is too heavy for 1 GB. Try SELECT → Request
-  mobile site, or raise `PAGE_MEMORY_LIMIT_MB` a little.
+  mobile site, or raise `PAGE_MEMORY_LIMIT_MB` a little. If it happens on pages that usually work,
+  **restart the device**: TrimUI's own on-screen display service (`trimui_osdd`) loses 2–4 MB of RAM every
+  time an app is started, and after many launches it holds hundreds of MB (359 MB measured after 30 hours
+  and many launches; 21 MB after a restart). That affects every app, not only the browser.
 - **Something else:** the log is `Apps/WPE/wpe-tsp.log` (rewritten at every start).
 
 ## ⚠️ Known limitations
