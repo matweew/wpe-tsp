@@ -2342,9 +2342,9 @@ int main(int argc, char **argv)
         "enable-smooth-scrolling", TRUE,
         /* Diagnostics: WPE_TSP_CONSOLE=1 prints the pages' console messages/errors to the log */
         "enable-write-console-messages-to-stdout", g_getenv("WPE_TSP_CONSOLE") != NULL,
-        /* WEBGL=1: WebGL via ANGLE on the PowerVR GPU. Off by default: costs memory, and some
-         * sites (e.g. Google Maps' vector map) get much heavier with it. */
-        "enable-webgl", !g_strcmp0(g_getenv("WPE_TSP_WEBGL"), "1"),
+        /* WEBGL: WebGL via ANGLE on the PowerVR GPU, on unless WEBGL=0. Measured: no memory or
+         * load-time cost on pages without 3D content. */
+        "enable-webgl", g_strcmp0(g_getenv("WPE_TSP_WEBGL"), "0") != 0,
         NULL);
     /* USER_AGENT: "mobile" (default), "desktop" (WebKit's own) or a full UA string */
     const char *ua_env = g_getenv("WPE_TSP_USER_AGENT");

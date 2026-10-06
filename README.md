@@ -28,8 +28,7 @@ you drive it with the gamepad, a USB keyboard and mouse, or the on-screen keyboa
 - ⌨️🖱️ **USB keyboard and mouse**: plug and play, with shortcuts and layout switching.
 - 🌍 **Any keyboard layout**: all XKB layouts (Ukrainian, German, French, Dvorak…) for both keyboards,
   switched with one key.
-- 🧊 **WebGL** (optional, `WEBGL=1`): 3D in pages on the GPU; the WebGL Aquarium sample runs at 30 fps
-  with 500 fish.
+- 🧊 **WebGL**: 3D in pages on the GPU; the WebGL Aquarium sample runs at 30 fps with 500 fish.
 - 📱 **Portrait mode**: turn the device sideways for long articles and feeds, like mpv does for portrait
   videos.
 - ⬇️ **Downloads**: save files, links and page media to the SD card, and play videos and audios from there.
@@ -127,7 +126,7 @@ Edit `Apps/WPE/settings.conf` on the SD card; changes apply at the next start.
 | `HISTORY_SIZE` | `20` | Pages kept in History (`0` = none, max 60) |
 | `POINTER_HIDE_SECONDS` | `10` | Hide the idle pointer after this long (`0` = never) |
 | `PAGE_MEMORY_LIMIT_MB` | `550` | Memory a page may use before it's closed (150–900) |
-| `WEBGL` | `0` | WebGL 3D graphics; `1` = on (uses more memory, some sites get heavier) |
+| `WEBGL` | `1` | WebGL 3D graphics; `0` = off |
 
 **Keyboard layouts.** `KEYBOARD_LAYOUTS` is a comma-separated list of XKB layout names, optionally with
 a variant: `KEYBOARD_LAYOUTS="us,ua,de(nodeadkeys)"`. It applies to both the on-screen and a physical
@@ -150,7 +149,7 @@ Keep a Latin layout such as `us` in the list for typing addresses.
 - One page at a time, no tabs.
 - Recently ended YouTube live streams can't be played until YouTube finishes processing them (usually
   within hours).
-- WebGL is off by default; no WebGPU.
+- No WebGPU (WebGL 1/2 only).
 
 ## 🙏 Credits
 
@@ -541,14 +540,18 @@ or is cancelled.
 
 ### WebGL
 
-WebKit is built with WebGL (ANGLE, translating to the device's GLES 3.2). It is **off by default**
-(`WEBGL=0`), so pages see no WebGL and fall back to their 2D versions. With `WEBGL=1`:
+WebKit is built with WebGL (ANGLE, translating to the device's GLES 3.2), **on by default** (`WEBGL=0`
+turns it off: pages then see no WebGL and fall back to their 2D versions).
 - a WebGL canvas shares its texture with WebKit's compositor and reaches the screen through the
   zero-copy path: a full-screen animated shader (1279×648) runs at **47 fps**;
-- it costs memory: +16 MB in the web process for that one small scene, more for real 3D content;
-- some sites may switch to heavier versions when WebGL is available, which matters with 1 GB of RAM.
-  Google Maps doesn't: checked on the device with `WEBGL=1`, it serves its image-tile version (a single
-  2D canvas, no WebGL context) to both the mobile and the desktop user agent;
+- the WebGL Aquarium sample runs at 30 fps with 500 fish (1024×1024 canvas);
+- 3D content costs memory: +16 MB in the web process for that one small scene, more for real 3D scenes;
+- pages without 3D content cost nothing: measured with `WEBGL=0` and `1` in alternating runs (Wikipedia,
+  mezha.ua, YouTube, BBC News, GitHub; 30 s after start), the web process and the PowerVR driver's GPU
+  memory (`/sys/kernel/debug/pvr/driver_stats`) differed only by noise (±2–9 MB, either way), and load
+  times not at all. Of eight popular sites only YouTube creates WebGL contexts (to probe the browser),
+  without measurable cost. Google Maps serves its image-tile version (a single 2D canvas) here either
+  way, to both the mobile and the desktop user agent;
 - the reported GPU is "Apple GPU": WebKit masks the real renderer name behind the iPhone user agent.
 
 ### Video playback in mpv
