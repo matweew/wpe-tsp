@@ -119,7 +119,7 @@ Edit `Apps/WPE/settings.conf` on the SD card; changes apply at the next start.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `HOME_URL` | *(empty)* | Home page (SELECT → Home); empty = blank page |
+| `HOME_URL` | *(empty)* | Home page (SELECT → Home); empty = the address bar opens instead |
 | `START_PAGE` | `home` | At start: `home`, `last` (last visited page) or `address` (open the address bar) |
 | `SEARCH_URL` | `https://www.google.com/search?q=` | Search engine for address-bar text that isn't a URL (the query is appended), e.g. DuckDuckGo: `https://duckduckgo.com/?q=` |
 | `KEYBOARD_LAYOUTS` | `us,ua,ru` | Keyboard layouts, see below |
@@ -493,7 +493,8 @@ for the session.
 ### Start page and cookies
 
 `START_PAGE` picks `HOME_URL`, the newest History entry (`last`; falls back to `HOME_URL`) or an empty
-page with the address bar open (`address`); a URL given to `launch.sh` overrides it. Cookies are kept in
+page with the address bar open (`address`); a URL given to `launch.sh` overrides it. Without a page to
+open (no `HOME_URL`, empty History) the address bar opens as well, and so does SELECT → Home. Cookies are kept in
 a SQLite jar (`/mnt/UDISK/wpe-browser/data/wpe/cookies.sqlite`): WebKit's default network session keeps
 local storage and IndexedDB on disk but cookies only in memory unless a persistent jar is set.
 

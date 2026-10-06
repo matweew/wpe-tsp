@@ -697,7 +697,8 @@ static void show_form_keyboard(void)
 
 static void show_url_keyboard(void)
 {
-    osk_show(OSK_MODE_URL, OSK_FIELD_URL, webkit_web_view_get_uri(app.web_view));
+    const char *uri = webkit_web_view_get_uri(app.web_view);
+    osk_show(OSK_MODE_URL, OSK_FIELD_URL, uri && strcmp(uri, "about:blank") ? uri : NULL);
     if (app.hid_typing) /* typing on a physical keyboard: show its layout */
         osk_select_language((int)hid_layout_index());
     app.needs_present = TRUE;
@@ -1604,7 +1605,14 @@ static void menu_activated(int index, void *user_data)
     switch (index) {
     case MENU_BACK: webkit_web_view_go_back(app.web_view); break;
     case MENU_FORWARD: webkit_web_view_go_forward(app.web_view); break;
-    case MENU_HOME: webkit_web_view_load_uri(app.web_view, app.home_url ? app.home_url : "about:blank"); break;
+    case MENU_HOME:
+        if (app.home_url)
+            webkit_web_view_load_uri(app.web_view, app.home_url);
+        else { /* no home page: an empty page with the address bar */
+            webkit_web_view_load_uri(app.web_view, "about:blank");
+            show_url_keyboard();
+        }
+        break;
     case MENU_HISTORY: webkit_web_view_load_uri(app.web_view, HISTORY_URI); break;
     case MENU_DOWNLOADS: open_downloads_menu(); return;
     case MENU_DESKTOP_SITE: toggle_desktop_site(); break;
@@ -2217,18 +2225,17 @@ int main(int argc, char **argv)
     history_load();
 
     /* START_PAGE: "home" (default), "last" (newest History entry; home if there is none) or
-     * "address" (empty page with the address bar open). */
+     * "address" (empty page with the address bar open). Without a page to open (no HOME_URL),
+     * the address bar opens too: an empty page alone doesn't say what to do. */
     const char *start_env = g_getenv("WPE_TSP_START_PAGE");
-    gboolean start_with_address_bar = FALSE;
     const char *start_url = app.home_url;
     if (argc > 1)
         start_url = argv[1];
     else if (start_env && !g_ascii_strcasecmp(start_env, "last") && history->len)
         start_url = ((HistoryEntry *)g_ptr_array_index(history, 0))->uri;
-    else if (start_env && !g_ascii_strcasecmp(start_env, "address")) {
+    else if (start_env && !g_ascii_strcasecmp(start_env, "address"))
         start_url = NULL;
-        start_with_address_bar = TRUE;
-    } else if (start_env && *start_env && g_ascii_strcasecmp(start_env, "home") && g_ascii_strcasecmp(start_env, "last"))
+    else if (start_env && *start_env && g_ascii_strcasecmp(start_env, "home") && g_ascii_strcasecmp(start_env, "last"))
         fprintf(stderr, "[wpe-tsp] START_PAGE=%s unknown, using home\n", start_env);
     const char *play_env = g_getenv("WPE_TSP_PLAY_YOUTUBE_IN_MPV");
     app.play_youtube = !play_env || strcmp(play_env, "0");
@@ -2391,7 +2398,7 @@ int main(int argc, char **argv)
 
     if (start_url)
         webkit_web_view_load_uri(app.web_view, start_url);
-    else if (start_with_address_bar)
+    else
         show_url_keyboard();
 
     app.loop = g_main_loop_new(NULL, FALSE);
