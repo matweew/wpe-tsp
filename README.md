@@ -173,8 +173,8 @@ Keep a Latin layout such as `us` in the list for typing addresses.
 
 ## ⚠️ Known limitations
 
-- Video inside pages is decoded in software: ~70% CPU, and YouTube drops to 240p–360p when frames are
-  dropped. For smooth 720p, set `PLAY_YOUTUBE_IN_MPV=1` (mpv, hardware decoding).
+- Video inside pages is decoded in software (~46% CPU). For the lightest playback, set
+  `PLAY_YOUTUBE_IN_MPV=1` (mpv, hardware H.264 decoding).
 - No video calls (WebRTC) and no DRM-protected video (Netflix, Spotify…).
 - The desktop YouTube site needs more memory than the device has; the default mobile one works.
 - One page at a time, no tabs.
@@ -626,15 +626,18 @@ demuxers for MP4/WebM/Ogg/MP3/WAV, parsers, gst-libav decoders, Opus/Vorbis, GL 
   (`GST_GL_API=gles2`, `GST_GL_PLATFORM=egl` in `launch.sh`): it tries desktop OpenGL first, which the
   PowerVR driver lacks (no picture). Its X11 backend links `libGL.so.1`: a stub with just those GLX
   entry points (`scripts/libgl-stub.c`) keeps glvnd's `gl*` stubs out of the process.
+- **Video sink:** WebKit's GStreamer GL sink is off (`WEBKIT_GST_DISABLE_GL_SINK=1` in `launch.sh`). With
+  it, uploads and colour conversion ran on GStreamer's own GL thread and every frame reached the sink
+  ~55 ms late: the decoder dropped nearly all of them (QoS) and video was a slideshow with fine audio,
+  although the CPU decodes 720p VP9 at ~115 fps (4 threads). Without it WebKit uploads the I420 frames
+  itself: after the first seconds 0–1 frames/s are dropped, at ~46% CPU instead of ~70%.
 - **Audio:** `alsasink` with the device's own libasound (not bundled), so its `asound.conf` (dmix,
   software volume) applies.
 - **Registry:** only the bundled plugins (`GST_PLUGIN_SYSTEM_PATH`), scanned in-process
   (`GST_REGISTRY_FORK=no`) and cached in `/mnt/UDISK/wpe-browser/cache/gstreamer-registry.bin`.
-- **Measured** (mobile YouTube, whole system, 4 cores): ~70% CPU, of it ~1.3–1.5 cores decoding (VP9
-  and H.264 cost about the same), the rest GL upload, compositing and the page; 290–380 MB available.
-  At 720p about a quarter of the frames are dropped, and YouTube's automatic quality settles at
-  240p–360p, which plays smoothly (1 frame dropped of 1552 at 240p). The desktop site is closed by
-  the low-memory watchdog.
+- **Measured** (mobile YouTube, whole system, 4 cores, without the GL sink): ~46% CPU, 260–380 MB
+  available, 0–1 frames/s dropped after the start. The desktop site is closed by the low-memory
+  watchdog.
 - With `PLAY_YOUTUBE_IN_MPV=1` the page's own player is kept paused under the **▶ Play in mpv** buttons
   (a capture-phase `play` listener), so it doesn't play along with mpv.
 - YouTube's *Stats for nerds* (gear menu → bottom) shows the codec, resolution and dropped frames.
