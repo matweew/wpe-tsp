@@ -8,6 +8,7 @@
 
 #include <SDL_ttf.h>
 #include <glib.h>
+#include <math.h>
 #include <string.h>
 
 
@@ -15,9 +16,10 @@
 #define REPEAT_DELAY_MS 350
 #define REPEAT_RATE_MS 70
 
-#define BAR_H 46
-#define ROW_H 56
-#define PAD 6
+/* Sizes in Smart Pro pixels, multiplied by the device's UI scale (S()) */
+#define BAR_H S(46)
+#define ROW_H S(56)
+#define PAD S(6)
 #define NUM_ROWS 4
 
 #define MAX_KEYS 16
@@ -32,7 +34,7 @@
 
 /* sel_row value for the ✕ (clear) button in the URL bar */
 #define SEL_ROW_CLEAR (-1)
-#define CLEAR_W 64
+#define CLEAR_W S(64)
 
 typedef enum { K_CHAR, K_SHIFT, K_BKSP, K_ENTER, K_SPACE, K_SYM, K_SYM2, K_ABC, K_LANG, K_PASTE } KeyKind;
 
@@ -92,8 +94,14 @@ static struct {
 
     HoldAction hold;
     Uint32 hold_since, last_repeat;
+    float scale;            /* UI scale: same physical size on every panel (1 = Smart Pro) */
     int axis_dir[2];
 } osk;
+
+static int S(int px)
+{
+    return (int)lroundf(px * osk.scale);
+}
 
 /* ------------------------------------------------------------------------- */
 /* Layouts                                                                   */
@@ -260,7 +268,7 @@ static SDL_Rect key_rect(int row_index, int col)
 static SDL_Rect clear_rect(void)
 {
     int top = osk.screen_h - osk_height();
-    return (SDL_Rect){ osk.screen_w - 12 - CLEAR_W, top + 5, CLEAR_W, BAR_H - 10 };
+    return (SDL_Rect){ osk.screen_w - S(12) - CLEAR_W, top + S(5), CLEAR_W, BAR_H - S(10) };
 }
 
 /* ------------------------------------------------------------------------- */
@@ -328,7 +336,7 @@ static void draw_line_with_caret(TTF_Font *font, const char *text, gsize caret, 
         TTF_SizeUTF8(font, prefix, &caret_x, NULL);
         g_free(prefix);
     }
-    int offset = MAX(0, caret_x - (max_w - 12)); /* scroll so the caret stays inside */
+    int offset = MAX(0, caret_x - (max_w - S(12))); /* scroll so the caret stays inside */
     if (*text) {
         SDL_Surface *surface = TTF_RenderUTF8_Blended(font, text, color);
         if (surface) {
@@ -341,7 +349,7 @@ static void draw_line_with_caret(TTF_Font *font, const char *text, gsize caret, 
         }
     }
     SDL_SetRenderDrawColor(osk.renderer, color.r, color.g, color.b, 255);
-    SDL_RenderFillRect(osk.renderer, &(SDL_Rect){ x + caret_x - offset, y + 3, 2, h - 6 });
+    SDL_RenderFillRect(osk.renderer, &(SDL_Rect){ x + caret_x - offset, y + S(3), S(2), h - S(6) });
 }
 
 /* ------------------------------------------------------------------------- */
@@ -550,9 +558,10 @@ static void stop_hold(HoldAction action)
 /* ------------------------------------------------------------------------- */
 
 bool osk_init(SDL_Renderer *renderer, int screen_w, int screen_h,
-              const char *font_path, const OskCallbacks *callbacks)
+              const char *font_path, const OskCallbacks *callbacks, float ui_scale)
 {
     memset(&osk, 0, sizeof(osk));
+    osk.scale = ui_scale > 0 ? ui_scale : 1;
     osk.renderer = renderer;
     osk.screen_w = screen_w;
     osk.screen_h = screen_h;
@@ -561,8 +570,8 @@ bool osk_init(SDL_Renderer *renderer, int screen_w, int screen_h,
         g_warning("TTF_Init failed: %s", TTF_GetError());
         return false;
     }
-    osk.font_key = TTF_OpenFont(font_path, 26);
-    osk.font_bar = TTF_OpenFont(font_path, 24);
+    osk.font_key = TTF_OpenFont(font_path, S(26));
+    osk.font_bar = TTF_OpenFont(font_path, S(24));
     if (!osk.font_key || !osk.font_bar) {
         g_warning("Failed to open font %s: %s", font_path, TTF_GetError());
         return false;
@@ -814,10 +823,10 @@ void osk_draw(void)
     fill_rect((SDL_Rect){ 0, top, osk.screen_w, BAR_H }, 41, 42, 45);
     const char *tag = osk.mode == OSK_MODE_URL ? "Search or URL" : osk.langs[osk.lang].name;
     Glyph *g = glyph_get(osk.font_bar, tag, accent_color);
-    int text_x = 16;
+    int text_x = S(16);
     if (g) {
-        SDL_RenderCopy(osk.renderer, g->texture, NULL, &(SDL_Rect){ 16, top + (BAR_H - g->h) / 2, g->w, g->h });
-        text_x += g->w + 16;
+        SDL_RenderCopy(osk.renderer, g->texture, NULL, &(SDL_Rect){ S(16), top + (BAR_H - g->h) / 2, g->w, g->h });
+        text_x += g->w + S(16);
     }
     const char *shown = osk.mode == OSK_MODE_URL ? osk.line->str : osk.field_text;
     gchar *masked = NULL;
@@ -828,29 +837,29 @@ void osk_draw(void)
         shown = masked = g_string_free(m, FALSE);
     }
     bool has_clear = osk.mode == OSK_MODE_URL;
-    int text_max_w = osk.screen_w - text_x - 16 - (has_clear ? CLEAR_W + 12 : 0);
+    int text_max_w = osk.screen_w - text_x - S(16) - (has_clear ? CLEAR_W + S(12) : 0);
     int text_y = top + (BAR_H - TTF_FontHeight(osk.font_bar)) / 2;
 
     /* ✕ selected: explain what the d-pad does here (and keep the URL clear of the hint) */
     if (has_clear && osk.sel_row == SEL_ROW_CLEAR) {
         Glyph *hg = glyph_get(osk.font_bar, "\xe2\x97\x80 \xe2\x96\xb6 cursor   A clear", dim_color); /* ◀ ▶ */
         if (hg) {
-            int hx = clear_rect().x - 16 - hg->w;
+            int hx = clear_rect().x - S(16) - hg->w;
             SDL_RenderCopy(osk.renderer, hg->texture, NULL, &(SDL_Rect){ hx, top + (BAR_H - hg->h) / 2, hg->w, hg->h });
-            text_max_w = MIN(text_max_w, hx - 16 - text_x);
+            text_max_w = MIN(text_max_w, hx - S(16) - text_x);
         }
     }
     if (osk.mode == OSK_MODE_URL && !osk.line->len) {
         /* Empty address bar: caret + placeholder that says search works here */
         gchar *hint = g_strdup_printf("Search %s or type a URL", osk.search_name ? osk.search_name : "the web");
         draw_text_once(osk.font_bar, "|", text_color, text_x, text_y, text_max_w);
-        draw_text_once(osk.font_bar, hint, dim_color, text_x + 10, text_y, text_max_w - 10);
+        draw_text_once(osk.font_bar, hint, dim_color, text_x + S(10), text_y, text_max_w - S(10));
         g_free(hint);
     } else if (osk.mode == OSK_MODE_URL && osk.line_selected) {
         /* Whole URL selected: highlight it, no caret (the next key replaces it) */
         int tw = 0, th = 0;
         TTF_SizeUTF8(osk.font_bar, shown, &tw, &th);
-        fill_rect((SDL_Rect){ text_x - 3, text_y, MIN(tw, text_max_w) + 6, th }, 52, 94, 168);
+        fill_rect((SDL_Rect){ text_x - S(3), text_y, MIN(tw, text_max_w) + S(6), th }, 52, 94, 168);
         draw_text_once(osk.font_bar, shown, text_color, text_x, text_y, text_max_w);
     } else if (osk.mode == OSK_MODE_URL) {
         draw_line_with_caret(osk.font_bar, osk.line->str, osk.caret, text_color, text_x, text_y, text_max_w);
@@ -906,7 +915,7 @@ void osk_draw(void)
                 SDL_RenderCopy(osk.renderer, kg->texture, NULL, &dst);
             }
             if (k->kind == K_SHIFT && osk.shift == SHIFT_LOCK) /* caps-lock underline */
-                fill_rect((SDL_Rect){ rect.x + rect.w / 2 - 12, rect.y + rect.h - 10, 24, 3 },
+                fill_rect((SDL_Rect){ rect.x + rect.w / 2 - S(12), rect.y + rect.h - S(10), S(24), S(3) },
                           color.r, color.g, color.b);
         }
     }

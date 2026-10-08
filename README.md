@@ -1,6 +1,6 @@
-# WPE Browser for TrimUI Smart Pro
+# WPE Browser for TrimUI Smart Pro and Brick
 
-A real web browser for the **TrimUI Smart Pro** handheld, built on [WPE WebKit](https://wpewebkit.org/)
+A real web browser for the **TrimUI Smart Pro**, **Brick** and **Brick Pro** handhelds, built on [WPE WebKit](https://wpewebkit.org/)
 2.54, the engine family behind Safari. It's tuned for the device's 1 GB of RAM and PowerVR GPU, and
 you drive it with the gamepad, a USB keyboard and mouse, or the on-screen keyboard.
 
@@ -47,7 +47,10 @@ you drive it with the gamepad, a USB keyboard and mouse, or the on-screen keyboa
 
 ## 📦 Installation
 
-You need a TrimUI Smart Pro with the stock firmware and Wi-Fi, and about 260 MB free on the SD card.
+You need a TrimUI Smart Pro, Brick or Brick Pro with the stock firmware and Wi-Fi, and about 300 MB free
+on the SD card. The same package runs on all three: the browser recognizes the model (from TrimUI's
+MainUI) and adapts the page zoom, its own menus and keyboard, and the controls. The Brick and Brick Pro
+haven't been tested on real hardware yet: reports are welcome.
 
 1. Download `WPE-<version>.zip` from the [latest release](../../releases/latest).
 2. Unpack it so that the browser's folder is `Apps/WPE` on the SD card (the device path must be exactly
@@ -79,6 +82,13 @@ To **update**, unpack a newer release over the old folder; `settings.conf` keeps
 | Y | Right click (context menus) |
 | START | Enter |
 | SELECT | Menu: Back, Forward, Home, History, Downloads, desktop/mobile site, Portrait/Landscape mode, Address bar, Zoom, Exit |
+
+**Brick** (no sticks): the d-pad moves the pointer (slowly at first, faster after ~0.7 s held), **L1 / R1**
+scroll up/down while held, **L2 / R2** are page up/down, and the **F1 / F2** keys go back/forward. The FN
+switch's joystick mode also moves the pointer. Everything else is as above.
+
+**Brick Pro**: the sticks work as on the Smart Pro; **F1 / F2** go back/forward and **R3** (right stick
+click) is a right click like Y. HOME stays with the firmware (its overlay menu).
 
 The pointer hides after 10 s without use; the first stick move or A/Y press shows it again (that press
 doesn't click).
@@ -133,7 +143,7 @@ Edit `Apps/WPE/settings.conf` on the SD card; changes apply at the next start.
 | `START_PAGE` | `home` | At start: `home`, `last` (last visited page) or `address` (open the address bar) |
 | `SEARCH_URL` | `https://www.google.com/search?q=` | Search engine for address-bar text that isn't a URL (the query is appended), e.g. DuckDuckGo: `https://duckduckgo.com/?q=` |
 | `KEYBOARD_LAYOUTS` | `us,ua,ru` | Keyboard layouts, see below |
-| `SCALE` | `1.5` | Page zoom: 1.5 = text 1.5× larger |
+| `SCALE` | per device | Page zoom: 1.5 = text 1.5× larger. Empty = the same text size on every model: Smart Pro 1.5, Brick 2.0, Brick Pro 1.65 |
 | `USER_AGENT` | `mobile` | `mobile` (iPhone Safari, lighter sites), `desktop`, or a full user-agent string |
 | `AD_BLOCK` | `1` | Ad and tracker blocking; `0` = off |
 | `PLAY_YOUTUBE_IN_MPV` | `0` | `1` = play YouTube and page videos in mpv (hardware H.264, smooth 720p); `0` = in the page (software) |
@@ -223,8 +233,13 @@ keep their own licenses.
 └─────────────────────────────────────────┘
 ```
 
-The device: Allwinner A133P (4× Cortex-A53), 1 GB RAM, no swap, 1280×720 screen, PowerVR GE8300
-(EGL 1.4, GLES 3.2), stock Tina Linux (kernel 4.9, glibc 2.33), exFAT SD card.
+The device: Allwinner A133P (4× Cortex-A53), 1 GB RAM, no swap, PowerVR GE8300 (EGL 1.4, GLES 3.2),
+stock Tina Linux (kernel 4.9, glibc 2.33), exFAT SD card. The screen is 1280×720 on the Smart Pro and
+1024×768 on the Brick and Brick Pro (same SoC and firmware family). `launch.sh` reads the model from
+MainUI (`strings /usr/trimui/bin/MainUI | grep ^Trimui`) into `WPE_TSP_DEVICE`; the browser takes the
+screen size from SDL and scales the page (`SCALE`) and its own UI (menus, keyboard, pointer) by the
+panel's pixel density: UI ×1.33 on the Brick, ×1.11 on the Brick Pro (NX Redux's per-panel scales).
+Descriptions below use the Smart Pro's numbers.
 
 **Rendering path.** WPE WebKit 2.54 bundles the *WPEPlatform* API, which lets an application provide its
 own display backend. The device has no KMS/GBM display or Wayland compositor (the screen is an fbdev
@@ -454,6 +469,9 @@ The app appears in TrimUI's **Apps** menu as **WPE Browser** (`config.json`, `ic
 Changes are tested on the real device, driven from the build host: start the browser with a test page,
 send it keyboard and mouse input, then check a screenshot and the log.
 
+- **Another model's layout on the Smart Pro:** `scripts/run-on-device.sh WPE_TSP_DEVICE=brick
+  WPE_TSP_SCREEN=1024x768 WPE_TSP_SCALE=2.0 <url>` lays the browser out for the Brick's 1024×768,
+  scaled to fit, with its UI scale and d-pad pointer controls (`brickpro` for the Brick Pro).
 - `scripts/run-on-device.sh [NAME=value ...] [url]` starts the browser (see above). Test pages can be any
   URL, a `data:` URL, or a file copied to the device (`file:///tmp/test.html`).
 - `scripts/device-input.sh STEP...` plugs a **virtual USB keyboard + mouse** into the device (uinput),

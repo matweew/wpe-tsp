@@ -15,6 +15,17 @@ for key in HOME_URL SEARCH_URL SCALE PAGE_MEMORY_LIMIT_MB POINTER_HIDE_SECONDS H
     [ -z "$env" ] && [ -n "$value" ] && export "WPE_TSP_$key=$value"
 done
 
+# Model: TrimUI's MainUI names it ("Trimui Smart Pro", "Trimui Brick", "Trimui Brick Pro"); the
+# browser picks its default page scale from it, and on the Brick (no sticks) the d-pad moves the
+# pointer. Without the string the browser guesses from the screen size.
+if [ -z "${WPE_TSP_DEVICE:-}" ]; then
+    case "$(strings /usr/trimui/bin/MainUI 2>/dev/null | grep -m 1 '^Trimui')" in
+        "Trimui Brick Pro") export WPE_TSP_DEVICE=brickpro ;;
+        "Trimui Brick") export WPE_TSP_DEVICE=brick ;;
+        "Trimui Smart Pro") export WPE_TSP_DEVICE=smartpro ;;
+    esac
+fi
+
 # Fonts: bundled DejaVu first; the device's Source Han Sans (/usr/trimui/res/full.ttf) as
 # fallback for characters DejaVu lacks (Chinese, Japanese, Korean). regular.ttf in the same
 # directory only duplicates the CJK coverage, so it is ignored.

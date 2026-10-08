@@ -9,7 +9,8 @@
 /* index of the chosen item, or -1 if the menu was closed without choosing (B / SELECT) */
 typedef void (*MenuActivate)(int index, void *user_data);
 
-bool menu_init(SDL_Renderer *renderer, int screen_w, int screen_h, const char *font_path);
+/* ui_scale: sizes are for the Smart Pro (1.0); the Brick's denser panels use more pixels */
+bool menu_init(SDL_Renderer *renderer, int screen_w, int screen_h, const char *font_path, float ui_scale);
 void menu_shutdown(void);
 void menu_set_renderer(SDL_Renderer *renderer);
 /* Screen orientation changed (portrait mode): lay out for the new size */

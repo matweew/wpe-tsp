@@ -35,8 +35,9 @@ typedef struct {
     void *user_data;
 } OskCallbacks;
 
+/* ui_scale: sizes are for the Smart Pro (1.0); the Brick's denser panels use more pixels */
 bool osk_init(SDL_Renderer *renderer, int screen_w, int screen_h,
-              const char *font_path, const OskCallbacks *callbacks);
+              const char *font_path, const OskCallbacks *callbacks, float ui_scale);
 void osk_shutdown(void);
 /* Switch renderer (e.g. the window is recreated): call with NULL before destroying the old one. */
 void osk_set_renderer(SDL_Renderer *renderer);

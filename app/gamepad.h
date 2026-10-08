@@ -13,7 +13,12 @@
 #define BTN_SELECT 6
 #define BTN_START  7
 #define BTN_MENU   8
-/* Buttons 9/10 are reported but the sticks don't click: no L3/R3 on this device. */
+/* Buttons 9/10 are reported on the Smart Pro but its sticks don't click. Brick: 9/10 are its F1/F2
+ * keys (no sticks). Brick Pro: 9/10 are L3/R3, 11/12 F1/F2, 15 HOME (the firmware's overlay). */
+#define BTN_9      9
+#define BTN_10     10
+#define BTN_11     11
+#define BTN_12     12
 
 #define AXIS_LX 0
 #define AXIS_LY 1

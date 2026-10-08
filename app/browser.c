@@ -42,11 +42,17 @@
 #include "ytdlp.h"
 #include "hid.h"
 
-#define SCREEN_W 1280            /* physical screen (landscape) */
-#define SCREEN_H 720
-/* Device scale: pages are laid out for SCREEN/SCALE CSS pixels and rendered at full resolution.
- * Overridable with WPE_TSP_SCALE. */
-#define DEFAULT_SCALE 1.5
+/* Device scale: pages are laid out for screen/SCALE CSS pixels and rendered at full resolution.
+ * The default keeps text about the same physical size on every panel (Smart Pro 4.96" 1280x720
+ * ~296 ppi; Brick 3.2" 1024x768 ~400 ppi; Brick Pro 3.95" 1024x768 ~324 ppi). Overridable with
+ * WPE_TSP_SCALE. */
+#define DEFAULT_SCALE_SMART_PRO 1.5
+#define DEFAULT_SCALE_BRICK 2.0
+#define DEFAULT_SCALE_BRICK_PRO 1.65
+/* Our own UI (menus, keyboard, status strip, pointer) at the same physical size: NX Redux's
+ * per-panel scales relative to the Smart Pro's (Brick 3.0, Brick Pro 2.5, Smart Pro 2.25) */
+#define UI_SCALE_BRICK (3.0 / 2.25)
+#define UI_SCALE_BRICK_PRO (2.5 / 2.25)
 
 /* Memory budget (MB) for the device's 1 GB RAM. WebKit frees caches at the conservative /
  * strict fractions of the limit; the web process is killed (and the page reloaded) at the kill
@@ -75,6 +81,12 @@
 #define AXIS_DEADZONE 6000
 #define POINTER_MAX_SPEED 14.0  /* px per tick at full stick deflection */
 #define SCROLL_MAX_SPEED 40.0   /* px per tick at full stick deflection */
+/* Brick (no sticks): the held d-pad / L1 / R1 speed up from MIN to MAX over RAMP_MS */
+#define DPAD_POINTER_MIN 2.0
+#define DPAD_POINTER_MAX 12.0
+#define DPAD_SCROLL_MIN 6.0
+#define DPAD_SCROLL_MAX 36.0
+#define DPAD_RAMP_MS 700.0
 #define KEY_REPEAT_DELAY_MS 350 /* d-pad arrow keys */
 #define KEY_REPEAT_RATE_MS 50
 #define TICK_MS 16
@@ -91,12 +103,20 @@ typedef struct {
     GMainLoop *loop;
 
     gboolean portrait;          /* page shown rotated 90 degrees counterclockwise, like mpv's portrait videos */
-    int screen_w, screen_h;     /* logical screen: SCREEN_W x SCREEN_H, swapped in portrait mode */
+    int phys_w, phys_h;         /* the panel (landscape), from SDL; WPE_TSP_SCREEN=WxH simulates another */
+    int screen_w, screen_h;     /* logical screen: phys_w x phys_h, swapped in portrait mode */
+    const char *device;         /* "smartpro", "brick" or "brickpro" (WPE_TSP_DEVICE, from launch.sh) */
+    gboolean dpad_pointer;      /* no sticks (Brick): the d-pad moves the pointer, L1/R1 scroll */
+    float ui_scale;             /* menus, keyboard, pointer: 1 on the Smart Pro */
     SDL_Texture *canvas;        /* portrait mode: everything is drawn here, then rotated onto the screen */
 
     double px, py;              /* pointer position */
     int axis[NUM_AXES];         /* joystick axes (as seen by the user in portrait mode) */
     gboolean trigger_down[2];   /* L2, R2 (analog axes) */
+    Uint8 hat;                  /* d-pad pointer: directions held, since hat_since */
+    guint32 hat_since;
+    int scroll_held;            /* d-pad pointer: L1 -1 / R1 +1 held, since scroll_since */
+    guint32 scroll_since;
     guint arrow_keyval;         /* arrow key held via d-pad, 0 if none */
     guint32 arrow_since, arrow_last;
     guint pointer_buttons;      /* WPE_MODIFIER_POINTER_BUTTON* currently held */
@@ -142,8 +162,10 @@ static guint32 now_ms(void)
 static void draw_pointer(void)
 {
     int x = (int)app.px, y = (int)app.py;
-    SDL_Rect outline[] = { { x - 9, y - 2, 19, 5 }, { x - 2, y - 9, 5, 19 } };
-    SDL_Rect fill[] = { { x - 8, y - 1, 17, 3 }, { x - 1, y - 8, 3, 17 } };
+    int arm = (int)lroundf(8 * app.ui_scale), half = app.ui_scale > 1.2f ? 2 : 1; /* fill: 2 * arm + 1 long */
+    SDL_Rect outline[] = { { x - arm - 1, y - half - 1, 2 * arm + 3, 2 * half + 3 },
+                           { x - half - 1, y - arm - 1, 2 * half + 3, 2 * arm + 3 } };
+    SDL_Rect fill[] = { { x - arm, y - half, 2 * arm + 1, 2 * half + 1 }, { x - half, y - arm, 2 * half + 1, 2 * arm + 1 } };
     SDL_SetRenderDrawColor(app.renderer, 0, 0, 0, 255);
     SDL_RenderFillRects(app.renderer, outline, 2);
     SDL_SetRenderDrawColor(app.renderer, 255, 255, 255, 255);
@@ -194,7 +216,7 @@ static void present(void)
          * the screen's left edge (the device is held turned clockwise, right stick at the bottom). */
         SDL_SetRenderTarget(app.renderer, NULL);
         SDL_RenderCopyEx(app.renderer, app.canvas, NULL,
-                         &(SDL_Rect){ (SCREEN_W - app.screen_w) / 2, (SCREEN_H - app.screen_h) / 2, app.screen_w, app.screen_h },
+                         &(SDL_Rect){ (app.phys_w - app.screen_w) / 2, (app.phys_h - app.screen_h) / 2, app.screen_w, app.screen_h },
                          -90, NULL, SDL_FLIP_NONE);
     }
     SDL_RenderPresent(app.renderer);
@@ -394,7 +416,7 @@ static void wpe_view_sdl_init(WPEViewSDL *self)
 }
 
 /* ------------------------------------------------------------------------- */
-/* WPEToplevelSDL: one fixed fullscreen 1280x720 "window"                    */
+/* WPEToplevelSDL: one fixed fullscreen "window" (the panel)                 */
 /* ------------------------------------------------------------------------- */
 
 #define WPE_TYPE_TOPLEVEL_SDL (wpe_toplevel_sdl_get_type())
@@ -655,8 +677,8 @@ static void set_portrait(gboolean portrait)
     if (app.portrait == portrait)
         return;
     app.portrait = portrait;
-    app.screen_w = portrait ? SCREEN_H : SCREEN_W;
-    app.screen_h = portrait ? SCREEN_W : SCREEN_H;
+    app.screen_w = portrait ? app.phys_h : app.phys_w;
+    app.screen_h = portrait ? app.phys_w : app.phys_h;
     if (app.canvas) {
         SDL_DestroyTexture(app.canvas);
         app.canvas = NULL;
@@ -1021,6 +1043,8 @@ static void player_restore_display(void *user_data)
     SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
     memset(app.axis, 0, sizeof(app.axis));
     app.trigger_down[0] = app.trigger_down[1] = FALSE;
+    app.hat = 0;
+    app.scroll_held = 0;
     app.arrow_keyval = 0;
     /* Show the last page frame again (frames that arrived meanwhile weren't uploaded) */
     WPEViewSDL *view = WPE_VIEW_SDL(app.wpe_view);
@@ -1760,6 +1784,15 @@ static void open_menu(void)
 static void handle_button(int button, gboolean pressed)
 {
     switch (button) {
+    case BTN_10: /* Brick: its F2 key, Forward. Brick Pro: R3 (stick click), right click like Y */
+        if (!strcmp(app.device, "brick")) {
+            if (pressed)
+                webkit_web_view_go_forward(app.web_view);
+            return;
+        }
+        if (strcmp(app.device, "brickpro"))
+            break;
+        /* fall through */
     case BTN_A:
     case BTN_Y: { /* A: left click, Y: right click */
         gboolean *swallow = button == BTN_A ? &app.swallow_a_release : &app.swallow_y_release;
@@ -1783,6 +1816,27 @@ static void handle_button(int button, gboolean pressed)
             send_button(3, pressed);
         return;
     }
+    case BTN_9:
+    case BTN_11:
+    case BTN_12: /* F1/F2 keys (Brick: 9/10, Brick Pro: 11/12): Back / Forward */
+        if (!pressed)
+            return;
+        if (!strcmp(app.device, "brick") ? button == BTN_9 : button == BTN_11)
+            webkit_web_view_go_back(app.web_view);
+        else if (!strcmp(app.device, "brickpro") && button == BTN_12)
+            webkit_web_view_go_forward(app.web_view);
+        return;
+    case BTN_L1:
+    case BTN_R1:
+        if (!app.dpad_pointer)
+            break;
+        /* Brick: scroll while held (input_tick) */
+        if (pressed) {
+            app.scroll_held = button == BTN_L1 ? -1 : 1;
+            app.scroll_since = now_ms();
+        } else if (app.scroll_held == (button == BTN_L1 ? -1 : 1))
+            app.scroll_held = 0;
+        return;
     }
     if (!pressed)
         return;
@@ -1803,9 +1857,16 @@ static void handle_button(int button, gboolean pressed)
     }
 }
 
-/* D-pad sends arrow keys, auto-repeating while held. */
+/* D-pad sends arrow keys, auto-repeating while held. Brick: it moves the pointer instead (input_tick). */
 static void handle_hat(Uint8 value)
 {
+    if (app.dpad_pointer) {
+        if (value != app.hat) {
+            app.hat = value;
+            app.hat_since = now_ms();
+        }
+        return;
+    }
     guint keyval = (value & SDL_HAT_UP) ? WPE_KEY_Up : (value & SDL_HAT_DOWN) ? WPE_KEY_Down
                  : (value & SDL_HAT_LEFT) ? WPE_KEY_Left : (value & SDL_HAT_RIGHT) ? WPE_KEY_Right : 0;
     if (keyval == app.arrow_keyval)
@@ -1826,8 +1887,9 @@ static void handle_trigger(int index, int value)
     if (down == app.trigger_down[index])
         return;
     app.trigger_down[index] = down;
-    if (down)
-        send_key(index == 0 ? WPE_KEY_Home : WPE_KEY_End);
+    if (down) /* Brick: L1/R1 scroll, so the triggers page */
+        send_key(index == 0 ? (app.dpad_pointer ? WPE_KEY_Page_Up : WPE_KEY_Home)
+                            : (app.dpad_pointer ? WPE_KEY_Page_Down : WPE_KEY_End));
 }
 
 /* ------------------------------------------------------------------------- */
@@ -2112,9 +2174,15 @@ static gboolean input_tick(gpointer user_data)
         send_key_event(WPE_EVENT_KEYBOARD_KEY_DOWN, app.arrow_keyval);
     }
 
-    /* Pointer: left stick */
+    /* Pointer: left stick (Brick: the d-pad) */
     double dx = axis_curve(app.axis[AXIS_LX], 3) * POINTER_MAX_SPEED;
     double dy = axis_curve(app.axis[AXIS_LY], 3) * POINTER_MAX_SPEED;
+    if (app.hat) {
+        double ramp = MIN((now - app.hat_since) / DPAD_RAMP_MS, 1.0);
+        double speed = DPAD_POINTER_MIN + (DPAD_POINTER_MAX - DPAD_POINTER_MIN) * ramp * ramp;
+        dx += ((app.hat & SDL_HAT_RIGHT) ? speed : 0) - ((app.hat & SDL_HAT_LEFT) ? speed : 0);
+        dy += ((app.hat & SDL_HAT_DOWN) ? speed : 0) - ((app.hat & SDL_HAT_UP) ? speed : 0);
+    }
     if (dx || dy) {
         app.pointer_used_ms = now;
         if (app.pointer_hidden) {
@@ -2130,6 +2198,10 @@ static gboolean input_tick(gpointer user_data)
     /* Scroll: right stick */
     double sx = axis_curve(app.axis[AXIS_RX], 2) * SCROLL_MAX_SPEED;
     double sy = axis_curve(app.axis[AXIS_RY], 2) * SCROLL_MAX_SPEED;
+    if (app.scroll_held) {
+        double ramp = MIN((now - app.scroll_since) / DPAD_RAMP_MS, 1.0);
+        sy += app.scroll_held * (DPAD_SCROLL_MIN + (DPAD_SCROLL_MAX - DPAD_SCROLL_MIN) * ramp);
+    }
     if (sx || sy)
         send_scroll(sx, sy);
 
@@ -2292,8 +2364,14 @@ static gboolean on_unix_signal(gpointer user_data)
 
 static int create_display(void)
 {
+    SDL_DisplayMode mode;
+    int panel_w = 1280, panel_h = 720; /* if SDL can't tell */
+    if (SDL_GetDesktopDisplayMode(0, &mode) == 0 && mode.w > 0 && mode.h > 0) {
+        panel_w = mode.w;
+        panel_h = mode.h;
+    }
     app.window = SDL_CreateWindow("WPE", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                  SCREEN_W, SCREEN_H, SDL_WINDOW_FULLSCREEN);
+                                  panel_w, panel_h, SDL_WINDOW_FULLSCREEN);
     if (!app.window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         return -1;
@@ -2310,6 +2388,16 @@ static int create_display(void)
     SDL_RendererInfo info;
     if (!SDL_GetRendererInfo(app.renderer, &info))
         fprintf(stderr, "[wpe-tsp] SDL renderer: %s\n", info.name);
+    app.phys_w = panel_w;
+    app.phys_h = panel_h;
+    /* Testing another model's layout: WPE_TSP_SCREEN=1024x768 lays out for that size, scaled to fit */
+    const char *screen_env = g_getenv("WPE_TSP_SCREEN");
+    int sim_w = 0, sim_h = 0;
+    if (screen_env && sscanf(screen_env, "%dx%d", &sim_w, &sim_h) == 2 && sim_w > 0 && sim_h > 0) {
+        app.phys_w = sim_w;
+        app.phys_h = sim_h;
+        SDL_RenderSetLogicalSize(app.renderer, sim_w, sim_h);
+    }
     SDL_ShowCursor(SDL_DISABLE);
     return 0;
 }
@@ -2377,17 +2465,28 @@ int main(int argc, char **argv)
         g_timeout_add_seconds(YTDLP_CHECK_DELAY_S, ytdlp_start_check, NULL);
     }
     g_free(exe_path); g_free(app_dir); g_free(app_root);
-    const char *scale_env = g_getenv("WPE_TSP_SCALE");
-    app.scale = scale_env ? CLAMP(g_ascii_strtod(scale_env, NULL), 1.0, 3.0) : DEFAULT_SCALE;
     app.load_progress = 1.0;
     stats.enabled = g_getenv("WPE_TSP_STATS") != NULL;
-    app.screen_w = SCREEN_W;
-    app.screen_h = SCREEN_H;
-    app.px = SCREEN_W / 2.0;
-    app.py = SCREEN_H / 2.0;
 
     if (init_sdl() < 0)
         return 1;
+    app.screen_w = app.phys_w;
+    app.screen_h = app.phys_h;
+    app.px = app.phys_w / 2.0;
+    app.py = app.phys_h / 2.0;
+
+    /* Model: launch.sh reads it from the firmware (MainUI's "Trimui ..." string). Without it, a
+     * 1024x768 panel is a Brick: d-pad pointer controls work on the Pro too (its sticks still do). */
+    const char *device_env = g_getenv("WPE_TSP_DEVICE");
+    app.device = device_env && *device_env ? device_env : app.phys_w == 1024 ? "brick" : "smartpro";
+    app.dpad_pointer = !strcmp(app.device, "brick");
+    const char *scale_env = g_getenv("WPE_TSP_SCALE");
+    double default_scale = !strcmp(app.device, "brick") ? DEFAULT_SCALE_BRICK
+                         : !strcmp(app.device, "brickpro") ? DEFAULT_SCALE_BRICK_PRO : DEFAULT_SCALE_SMART_PRO;
+    app.scale = scale_env && *scale_env ? CLAMP(g_ascii_strtod(scale_env, NULL), 1.0, 3.0) : default_scale;
+    app.ui_scale = !strcmp(app.device, "brick") ? UI_SCALE_BRICK : !strcmp(app.device, "brickpro") ? UI_SCALE_BRICK_PRO : 1.0f;
+    fprintf(stderr, "[wpe-tsp] device: %s, %dx%d, scale %.2f%s\n", app.device, app.phys_w, app.phys_h, app.scale,
+            app.dpad_pointer ? ", d-pad pointer" : "");
 
     /* Data files live next to the binary: <app>/bin/wpe-tsp, <app>/share/... */
     char *exe = g_file_read_link("/proc/self/exe", NULL);
@@ -2403,12 +2502,12 @@ int main(int argc, char **argv)
         .is_search = osk_is_search,
         .paste_text = osk_paste_text,
     };
-    if (!osk_init(app.renderer, SCREEN_W, SCREEN_H, font_path, &osk_callbacks))
+    if (!osk_init(app.renderer, app.phys_w, app.phys_h, font_path, &osk_callbacks, app.ui_scale))
         fprintf(stderr, "[wpe-tsp] on-screen keyboard unavailable\n");
     char *engine = search_engine_name(app.search_url);
     osk_set_search_name(engine);
     g_free(engine);
-    if (!menu_init(app.renderer, SCREEN_W, SCREEN_H, font_path))
+    if (!menu_init(app.renderer, app.phys_w, app.phys_h, font_path, app.ui_scale))
         fprintf(stderr, "[wpe-tsp] menu unavailable\n");
     g_free(exe); g_free(bindir); g_free(font_path); /* app_data_dir, keymaps_path: used below */
     app.view_height = app.screen_h;
