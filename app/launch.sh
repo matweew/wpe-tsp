@@ -46,6 +46,19 @@ export XDG_DATA_HOME="$datadir/data"
 export XDG_CACHE_HOME="$datadir/cache"
 mkdir -p "$XDG_DATA_HOME" "$XDG_CACHE_HOME"
 
+# GStreamer (<video>/<audio>): only the bundled plugins; the registry is scanned in-process
+# (no gst-plugin-scanner helper) and cached with the HTTP cache. AV1 has no hardware support
+# and is too slow in software here: hide FFmpeg's AV1 decoder, so sites pick H.264 or VP9.
+export GST_PLUGIN_SYSTEM_PATH="$progdir/lib/gstreamer-1.0"
+export GST_PLUGIN_PATH=
+export GST_REGISTRY_FORK=no
+export GST_REGISTRY="$XDG_CACHE_HOME/gstreamer-registry.bin"
+export GST_PLUGIN_FEATURE_RANK="avdec_av1:NONE,${GST_PLUGIN_FEATURE_RANK:-}"
+# GStreamer's GL (video frames to the GPU) asks EGL for desktop OpenGL first; the PowerVR driver
+# only has GLES ("Failed to bind OpenGL API: EGL_BAD_PARAMETER" and no picture).
+export GST_GL_API=gles2
+export GST_GL_PLATFORM=egl
+
 # Rendering tuning for the PowerVR GE8300: 4x MSAA is costly on this GPU, Skia's
 # analytic anti-aliasing looks the same for page content.
 export WEBKIT_SKIA_MSAA_SAMPLE_COUNT=${WEBKIT_SKIA_MSAA_SAMPLE_COUNT:-0}

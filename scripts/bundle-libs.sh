@@ -12,13 +12,16 @@ DEVICE_PREFIX=$1; OUT=$2; shift 2
 LIBDIR="$OUT/lib"
 mkdir -p "$LIBDIR"
 
-SEARCH=(/usr/lib/aarch64-linux-gnu /lib/aarch64-linux-gnu /usr/aarch64-linux-gnu/lib "$OUT/lib")
+# build/ffmpeg first: the minimal FFmpeg (scripts/build-ffmpeg.sh) replaces Debian's for gst-libav
+SEARCH=(/work/build/ffmpeg/lib /usr/lib/aarch64-linux-gnu /lib/aarch64-linux-gnu /usr/aarch64-linux-gnu/lib "$OUT/lib")
 
 # Provided by the device (PowerVR GPU stack, TrimUI SDL2): never bundle these.
 skip() {
     case "$1" in
         libEGL.so*|libGLESv2.so*|libGLESv1_CM.so*|libGLdispatch.so*|libGLX*|libOpenGL.so*) return 0 ;;
         libSDL2-2.0.so*|libSDL2_ttf-2.0.so*) return 0 ;;
+        libasound.so*) return 0 ;;  # the device's alsa-lib matches its asound.conf and plugins
+        libGL.so.1) return 0 ;;     # a stub built by package.sh (scripts/libgl-stub.c)
         *) return 1 ;;
     esac
 }

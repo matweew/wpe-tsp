@@ -3,6 +3,17 @@
 # Debian bookworm gives GCC 12.2 (WebKit 2.54 requires >= 12.2) and prebuilt arm64
 # dependencies via multiarch. Bookworm's glibc (2.36) is newer than the device's (2.33),
 # so the runtime ships its own glibc + dynamic loader (see scripts/bundle.sh).
+
+# GStreamer (arm64) for <video>/<audio>: installed in a stage of its own, since the builder's apt
+# can't install anymore (see --force-depends below); its arm64 files are copied in at the end.
+# Base/good/bad plugins + gst-libav (Debian's FFmpeg 5.1: H.264, VP9, AAC... in software).
+FROM debian:bookworm AS gstreamer
+RUN dpkg --add-architecture arm64 && apt-get update && apt-get install -y --no-install-recommends \
+        libgstreamer1.0-dev:arm64 libgstreamer-plugins-base1.0-dev:arm64 libgstreamer-plugins-bad1.0-dev:arm64 \
+        gstreamer1.0-plugins-base:arm64 gstreamer1.0-plugins-good:arm64 gstreamer1.0-plugins-bad:arm64 \
+        gstreamer1.0-libav:arm64 gstreamer1.0-alsa:arm64 gstreamer1.0-gl:arm64 \
+    && rm -rf /var/lib/apt/lists/*
+
 FROM debian:bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -75,3 +86,8 @@ RUN apt-get update && cd /tmp && apt-get download shared-mime-info && dpkg -x sh
     && smi/usr/bin/update-mime-database mime \
     && cp mime/mime.cache /opt/runtime-data/usr/share/mime/ \
     && rm -rf /tmp/smi /tmp/mime /tmp/*.deb /var/lib/apt/lists/*
+
+# GStreamer from the stage above: arm64 libraries, plugins, headers (pkg-config files included)
+COPY --from=gstreamer /usr/lib/aarch64-linux-gnu /usr/lib/aarch64-linux-gnu
+COPY --from=gstreamer /usr/include/gstreamer-1.0 /usr/include/gstreamer-1.0
+COPY --from=gstreamer /usr/include/aarch64-linux-gnu /usr/include/aarch64-linux-gnu

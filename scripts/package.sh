@@ -39,6 +39,24 @@ cp -r "$STAGE/libexec" "$OUT/"
 mkdir -p "$OUT/lib/gio/modules"
 cp "$MULTIARCH/gio/modules/libgiognutls.so" "$OUT/lib/gio/modules/"
 
+# --- GStreamer plugins for <video>/<audio> (Debian's; the libraries come with the closure below).
+# Only what playback needs: demuxers (MP4, WebM, Ogg, MP3, WAV), parsers, FFmpeg decoders
+# (gst-libav: H.264, VP9, AAC...), Opus/Vorbis, conversion, GL upload (WebKit's video sink),
+# ALSA output (the device's libasound and asound.conf: dmix + its volume control). WebKit also
+# asks for scaletempo (audiofx: playback speed), videobalance (videofilter), deinterlace and the
+# WebVTT encoder (subenc: subtitles).
+GST_PLUGINS="coreelements typefindfunctions playback app gio audioconvert audioresample audiomixer
+    videoconvertscale volume opengl opus opusparse vorbis ogg alsa autodetect audioparsers isomp4
+    matroska id3demux mpg123 wavparse interleave libav videoparsersbad audiofx videofilter deinterlace
+    subenc"
+mkdir -p "$OUT/lib/gstreamer-1.0"
+for plugin in $GST_PLUGINS; do
+    cp "$MULTIARCH/gstreamer-1.0/libgst$plugin.so" "$OUT/lib/gstreamer-1.0/"
+done
+
+# GStreamer's GL library links libGL.so.1 for X11 only: a stub with the GLX entry points it names
+aarch64-linux-gnu-gcc-12 -O2 -shared -fPIC -Wl,-soname,libGL.so.1 -o "$OUT/lib/libGL.so.1" /work/scripts/libgl-stub.c
+
 # --- ad blocking: EasyList + EasyPrivacy domain rules -> WebKit content-blocker JSON.
 # The lists are cached in build/adblock; ADBLOCK_REFRESH=1 downloads fresh copies.
 ADBLOCK=/work/build/adblock
@@ -76,11 +94,13 @@ cp /work/app/launch.sh /work/app/config.json /work/app/settings.conf "$OUT/"
 chmod +x "$OUT/launch.sh"
 
 # --- resolve shared-lib closure, bundle glibc, set interpreter + rpath
-ELFS=("$OUT/bin/wpe-tsp" "$OUT"/libexec/wpe-webkit-2.0/* "$OUT"/lib/*.so.* "$OUT/lib/gio/modules/libgiognutls.so")
+ELFS=("$OUT/bin/wpe-tsp" "$OUT"/libexec/wpe-webkit-2.0/* "$OUT"/lib/*.so.* "$OUT/lib/gio/modules/libgiognutls.so"
+      "$OUT"/lib/gstreamer-1.0/*.so)
 while IFS= read -r -d '' f; do ELFS+=("$f"); done < <(find "$OUT/lib/wpe-webkit-2.0" -name '*.so' -print0 2>/dev/null)
 /work/scripts/bundle-libs.sh "$DEVICE_PREFIX" "$OUT" "${ELFS[@]}"
 
-aarch64-linux-gnu-strip --strip-unneeded "$OUT/bin/wpe-tsp" "$OUT"/libexec/wpe-webkit-2.0/* "$OUT"/lib/*.so* 2>/dev/null || true
+aarch64-linux-gnu-strip --strip-unneeded "$OUT/bin/wpe-tsp" "$OUT"/libexec/wpe-webkit-2.0/* "$OUT"/lib/*.so* \
+    "$OUT"/lib/gstreamer-1.0/*.so 2>/dev/null || true
 
 # exFAT can't store symlinks: fail loudly if any slipped in.
 if find "$OUT" -type l | grep -q .; then

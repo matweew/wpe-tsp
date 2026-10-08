@@ -1049,14 +1049,17 @@ static void on_uri_changed(WebKitWebView *web_view, GParamSpec *pspec, gpointer 
     g_free(watch);
 }
 
-/* Embedded YouTube players (iframes of youtube.com/embed/ID) can't play in this build: cover
- * them with a "Play in mpv" button that sends the video to the browser. Injected into all
- * frames; YouTube may rebuild its DOM, so the button is re-added when it disappears. */
+/* PLAY_YOUTUBE_IN_MPV=1: embedded YouTube players (iframes of youtube.com/embed/ID) are covered
+ * with a "Play in mpv" button that sends the video to the browser, and the embed's own player is
+ * kept paused (it would play under the button). Injected into all frames; YouTube may rebuild its
+ * DOM, so the button is re-added when it disappears. */
 static const char EMBED_PLAY_JS[] =
     "(() => {"
     "const m = location.pathname.match(/^\\/embed\\/([A-Za-z0-9_-]{11})/);"
     "if (!m || !window.webkit || !window.webkit.messageHandlers.wpeTspPlay) return;"
     "const url = 'https://www.youtube.com/watch?v=' + m[1];"
+    /* media events don't bubble: catch them on the way down */
+    "document.addEventListener('play', e => e.target.pause(), true);"
     /* DOM calls only: YouTube enforces Trusted Types, which rejects innerHTML strings */
     "const el = (css, parent) => { const e = document.createElement('div'); e.style.cssText = css;"
     "  if (parent) parent.appendChild(e); return e; };"
@@ -1079,8 +1082,9 @@ static const char EMBED_PLAY_JS[] =
     "new MutationObserver(add).observe(document.documentElement, { childList: true, subtree: true });"
     "})()";
 
-/* YouTube's own pages (watch, Shorts): the page stays open next to mpv, but its player only shows
- * "can't play". Cover it with the video's thumbnail and a "Play in mpv" button (to watch again).
+/* YouTube's own pages (watch, Shorts) with PLAY_YOUTUBE_IN_MPV=1: the page stays open next to mpv,
+ * its own player kept paused. Cover it with the video's thumbnail and a "Play in mpv" button (to
+ * watch again).
  * YouTube navigates in-page and rebuilds its DOM, so the button follows the current address and is
  * re-added when it disappears (checked once per frame at most). */
 static const char WATCH_PLAY_JS[] =
@@ -1093,6 +1097,8 @@ static const char WATCH_PLAY_JS[] =
     "const el = (css, parent) => { const e = document.createElement('div'); e.style.cssText = css;"
     "  if (parent) parent.appendChild(e); return e; };"
     "let button = null;"
+    "document.addEventListener('play', e => { if (videoId() && e.target.closest('.html5-video-player'))"
+    "  e.target.pause(); }, true);"
     "const build = () => {"
     "  const b = el('position:absolute;left:0;top:0;right:0;bottom:0;z-index:2147483647;display:flex;"
     "flex-direction:column;align-items:center;justify-content:center;cursor:pointer;"
@@ -1126,9 +1132,10 @@ static const char WATCH_PLAY_JS[] =
     "  .observe(document.documentElement, { childList: true, subtree: true });"
     "})()";
 
-/* <video>/<audio> can't play in this build: replace each with a box (poster/size kept) whose click
- * sends the source URL to mpv, which also handles HLS (.m3u8) and DASH (.mpd). blob: sources (page-
- * built MediaSource streams) only exist inside the page, so those elements are left alone. */
+/* PLAY_YOUTUBE_IN_MPV=1: replace each <video>/<audio> with a box (poster/size kept) whose click
+ * sends the source URL to mpv (hardware H.264, and lighter than playing in the page), which also
+ * handles HLS (.m3u8) and DASH (.mpd). The hidden element is kept from loading or playing. blob:
+ * sources (page-built MediaSource streams) only exist inside the page, so those play in the page. */
 static const char MEDIA_PLAY_JS[] =
     "(() => {"
     "if (!window.webkit || !window.webkit.messageHandlers.wpeTspPlayMedia) return;"
@@ -1141,7 +1148,8 @@ static const char MEDIA_PLAY_JS[] =
     "  return null; };"
     "const div = (css, parent) => { const e = document.createElement('div'); e.style.cssText = css;"
     "  if (parent) parent.appendChild(e); return e; };"
-    "const seen = new WeakSet();"
+    "const seen = new WeakSet(), replaced = new WeakSet();"
+    "document.addEventListener('play', e => { if (replaced.has(e.target)) e.target.pause(); }, true);"
     "const replace = el => {"
     "  if (seen.has(el)) return; seen.add(el);"
     "  const url = sourceOf(el); if (!url || !el.parentNode) return;"
@@ -1164,6 +1172,7 @@ static const char MEDIA_PLAY_JS[] =
     "    window.webkit.messageHandlers.wpeTspPlayMedia.postMessage(url); }, true);"
     "  el.parentNode.insertBefore(box, el);"
     "  el.style.display = 'none';"
+    "  replaced.add(el); el.autoplay = false; el.preload = 'none'; el.pause();"
     "};"
     "let queued = false;"
     "const scan = () => { queued = false; document.querySelectorAll('video,audio').forEach(replace); };"
