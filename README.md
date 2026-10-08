@@ -74,12 +74,17 @@ To **update**, unpack a newer release over the old folder; `settings.conf` keeps
 | L1 / R1 | Page up / page down |
 | L2 / R2 | Top / bottom of the page |
 | X | Reload |
-| Y | Address bar |
+| Y | Right click (context menus) |
 | START | Enter |
 | SELECT | Menu: Back, Forward, Home, History, Downloads, desktop/mobile site, Portrait/Landscape mode, Address bar, Zoom, Exit |
 
-The pointer hides after 10 s without use; the first stick move or A press shows it again (that A press
+The pointer hides after 10 s without use; the first stick move or A/Y press shows it again (that press
 doesn't click).
+
+**Right click (Y)** opens a menu for what is under the pointer: a link (open, copy address, download),
+an image (copy address, save), a video (play/pause, mute, loop, copy address, download), selected text
+(copy), a text field (cut, copy, paste) or the page (back, forward, reload). Pages with menus of their
+own (e.g. desktop YouTube's player) get the right click instead.
 
 **On-screen keyboard** (opens for the address bar and text fields):
 
@@ -96,7 +101,9 @@ doesn't click).
 | START / ↵ | Enter (**Go** or **Search** in the address bar) |
 
 In the address bar the current URL opens selected (typing replaces it). Up from the top row reaches **✕**:
-A clears the line, left/right move the cursor.
+A clears the line, left/right move the cursor. **Paste** (bottom row) inserts the text last copied in the
+browser (right click → Copy or Copy Link Address, Ctrl+C on a USB keyboard). The clipboard is the
+browser's own: not shared with other apps and empty after a restart.
 
 **Keyboard and mouse** (USB, picked up when connected):
 

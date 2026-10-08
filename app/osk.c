@@ -34,7 +34,7 @@
 #define SEL_ROW_CLEAR (-1)
 #define CLEAR_W 64
 
-typedef enum { K_CHAR, K_SHIFT, K_BKSP, K_ENTER, K_SPACE, K_SYM, K_SYM2, K_ABC, K_LANG } KeyKind;
+typedef enum { K_CHAR, K_SHIFT, K_BKSP, K_ENTER, K_SPACE, K_SYM, K_SYM2, K_ABC, K_LANG, K_PASTE } KeyKind;
 
 typedef struct {
     KeyKind kind;
@@ -169,15 +169,17 @@ static void build_rows(void)
                 row_add(&r[3], K_LANG, lang->name, NULL, 1);
             row_add(&r[3], K_CHAR, "/", NULL, 1);
             row_add(&r[3], K_CHAR, ".com", NULL, 1.5f);
-            row_add(&r[3], K_SPACE, "", " ", osk.n_langs > 1 ? 2 : 3);
+            row_add(&r[3], K_SPACE, "", " ", osk.n_langs > 1 ? 1.5f : 2.5f);
+            row_add(&r[3], K_PASTE, "Paste", NULL, 1);
             row_add(&r[3], K_CHAR, ".", NULL, 1);
-            row_add(&r[3], K_ENTER, LABEL_ENTER, NULL, 2);
+            row_add(&r[3], K_ENTER, LABEL_ENTER, NULL, 1.5f);
         } else {
             row_add(&r[3], K_SYM, "?123", NULL, 1.5f);
             if (osk.n_langs > 1)
                 row_add(&r[3], K_LANG, lang->name, NULL, 1);
             row_add(&r[3], K_CHAR, osk.field == OSK_FIELD_EMAIL ? "@" : ",", NULL, 1);
-            row_add(&r[3], K_SPACE, lang->name, " ", osk.n_langs > 1 ? 4 : 5);
+            row_add(&r[3], K_SPACE, lang->name, " ", osk.n_langs > 1 ? 3 : 4);
+            row_add(&r[3], K_PASTE, "Paste", NULL, 1);
             row_add(&r[3], K_CHAR, ".", NULL, 1);
             row_add(&r[3], K_ENTER, LABEL_ENTER, NULL, 1.5f);
         }
@@ -204,11 +206,12 @@ static void build_rows(void)
         if (url) {
             row_add(&r[3], K_CHAR, "https://", NULL, 2);
             row_add(&r[3], K_CHAR, "www.", NULL, 1.5f);
-            row_add(&r[3], K_SPACE, "", " ", 2);
+            row_add(&r[3], K_SPACE, "", " ", 1);
         } else {
             row_add(&r[3], K_CHAR, ",", NULL, 1);
-            row_add(&r[3], K_SPACE, "", " ", 5);
+            row_add(&r[3], K_SPACE, "", " ", 4);
         }
+        row_add(&r[3], K_PASTE, "Paste", NULL, 1);
         row_add(&r[3], K_CHAR, ".", NULL, 1);
         row_add(&r[3], K_ENTER, LABEL_ENTER, NULL, url ? 2 : 1.5f);
     }
@@ -382,6 +385,19 @@ static void type_text(const char *text)
         osk.cb.commit(text, osk.cb.user_data);
 }
 
+/* Paste key: the browser's clipboard (text copied from pages). The address bar is one line. */
+static void paste(void)
+{
+    char *text = osk.cb.paste_text ? osk.cb.paste_text(osk.cb.user_data) : NULL;
+    if (text && osk.mode == OSK_MODE_URL) {
+        g_strdelimit(text, "\r\n\t", ' ');
+        g_strstrip(text);
+    }
+    if (text && *text)
+        type_text(text);
+    g_free(text);
+}
+
 static void backspace(void)
 {
     if (osk.mode == OSK_MODE_URL) {
@@ -456,6 +472,7 @@ static void press_selected(void)
     case K_SYM2: set_page(PAGE_SYM2); break;
     case K_ABC: set_page(PAGE_LETTERS); break;
     case K_LANG: next_lang(); break;
+    case K_PASTE: paste(); break;
     }
 }
 

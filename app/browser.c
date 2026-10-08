@@ -12,7 +12,7 @@
  * Controls (NetSurf-port style, A is the main action, B only cancels):
  *   left stick   move pointer            A       left click (hold to drag/select)
  *                (light tilt = precise)  B       stop loading
- *   right stick  smooth scroll           Y       address bar (keyboard)
+ *   right stick  smooth scroll           Y       right click (context menus, e.g. YouTube's player)
  *   d-pad        arrow keys              X       reload
  *   L1 / R1      page up / page down     START   Enter
  *   L2 / R2      top / bottom of page    SELECT  menu (back, forward, home, zoom, exit)
@@ -109,6 +109,7 @@ typedef struct {
     guint32 pointer_used_ms;    /* last pointer movement or click */
     guint32 pointer_hide_ms;
     gboolean swallow_a_release; /* A only revealed the hidden pointer: don't send the release */
+    gboolean swallow_y_release; /* same for Y (right click) */
     guint swallow_mouse;        /* mouse buttons (bit n = button n) whose press only revealed the pointer */
     char *link_under_pointer;   /* from WebKit's hit test, for "Save link under pointer" */
     gboolean editable_under_pointer; /* from WebKit's hit test: a text field / editable area */
@@ -721,6 +722,18 @@ static void osk_backspace(void *user_data)
 static gboolean input_is_url(const char *input)
 {
     return strstr(input, "://") || g_str_has_prefix(input, "about:") || (!strchr(input, ' ') && strchr(input, '.'));
+}
+
+/* Paste key: text copied in pages (WebKit's copy goes to the display's clipboard, in memory) */
+static char *osk_paste_text(void *user_data)
+{
+    (void)user_data;
+    WPEClipboard *clipboard = wpe_display_get_clipboard(wpe_view_get_display(app.wpe_view));
+    gsize size = 0;
+    char *data = wpe_clipboard_read_text(clipboard, "text/plain", &size);
+    char *text = data ? g_strndup(data, size) : NULL; /* the bytes as stored: not NUL-terminated */
+    g_free(data);
+    return text;
 }
 
 static bool osk_is_search(const char *line, void *user_data)
@@ -1635,6 +1648,98 @@ static void menu_activated(int index, void *user_data)
     app.needs_present = TRUE;
 }
 
+/* Right click (Y, mouse): WebKit proposes the items for what is under the pointer (link, image,
+ * video, selection...) but WPE draws no menu; show them in our menu. The items are kept until one
+ * is chosen: WebKit empties its menu when the signal returns. */
+static GPtrArray *context_items; /* of WebKitContextMenuItem */
+
+static void context_menu_activated(int index, void *user_data)
+{
+    (void)user_data;
+    if (index >= 0 && (guint)index < context_items->len) {
+        WebKitContextMenuItem *item = g_ptr_array_index(context_items, index);
+        GAction *action = webkit_context_menu_item_get_gaction(item);
+        if (action)
+            g_action_activate(action, webkit_context_menu_item_get_gaction_target(item));
+    }
+    g_ptr_array_set_size(context_items, 0);
+    app.needs_present = TRUE;
+}
+
+/* What a single-view browser without developer tools can't do */
+static gboolean context_item_supported(WebKitContextMenuItem *item)
+{
+    if (webkit_context_menu_item_is_separator(item) || webkit_context_menu_item_get_submenu(item))
+        return FALSE;
+    switch (webkit_context_menu_item_get_stock_action(item)) {
+    case WEBKIT_CONTEXT_MENU_ACTION_OPEN_LINK_IN_NEW_WINDOW:
+    case WEBKIT_CONTEXT_MENU_ACTION_OPEN_IMAGE_IN_NEW_WINDOW:
+    case WEBKIT_CONTEXT_MENU_ACTION_OPEN_FRAME_IN_NEW_WINDOW:
+    case WEBKIT_CONTEXT_MENU_ACTION_OPEN_VIDEO_IN_NEW_WINDOW:
+    case WEBKIT_CONTEXT_MENU_ACTION_OPEN_AUDIO_IN_NEW_WINDOW:
+    case WEBKIT_CONTEXT_MENU_ACTION_INSPECT_ELEMENT:
+    case WEBKIT_CONTEXT_MENU_ACTION_NO_GUESSES_FOUND:
+        return FALSE;
+    default: {
+        GAction *action = webkit_context_menu_item_get_gaction(item);
+        return action && g_action_get_enabled(action);
+    }
+    }
+}
+
+static gboolean on_context_menu(WebKitWebView *web_view, WebKitContextMenu *menu, WebKitHitTestResult *hit,
+                                gpointer user_data)
+{
+    (void)web_view; (void)user_data;
+    if (menu_visible() || osk_visible())
+        return FALSE;
+    if (!context_items)
+        context_items = g_ptr_array_new_with_free_func(g_object_unref);
+    g_ptr_array_set_size(context_items, 0);
+    GPtrArray *labels = g_ptr_array_new_with_free_func(g_free);
+    for (GList *l = webkit_context_menu_get_items(menu); l; l = l->next) {
+        WebKitContextMenuItem *item = l->data;
+        if (!context_item_supported(item))
+            continue;
+        /* GTK-style mnemonics: "Open _Link" -> "Open Link" ("__" is a literal underscore) */
+        const char *title = webkit_context_menu_item_get_title(item);
+        GString *label = g_string_new(NULL);
+        for (const char *c = title ? title : ""; *c; c++) {
+            if (*c == '_' && c[1] == '_')
+                c++;
+            else if (*c == '_')
+                continue;
+            g_string_append_c(label, *c);
+        }
+        g_ptr_array_add(labels, g_string_free(label, FALSE));
+        g_ptr_array_add(context_items, g_object_ref(item));
+    }
+    if (!context_items->len) {
+        g_ptr_array_free(labels, TRUE);
+        return FALSE;
+    }
+    g_ptr_array_add(labels, NULL);
+    /* Title: what was clicked; subtitle: its address */
+    const char *title = "Page", *uri = webkit_web_view_get_uri(app.web_view);
+    if (webkit_hit_test_result_context_is_link(hit)) {
+        title = "Link";
+        uri = webkit_hit_test_result_get_link_uri(hit);
+    } else if (webkit_hit_test_result_context_is_media(hit)) {
+        title = "Video or audio";
+        uri = webkit_hit_test_result_get_media_uri(hit);
+    } else if (webkit_hit_test_result_context_is_image(hit)) {
+        title = "Image";
+        uri = webkit_hit_test_result_get_image_uri(hit);
+    } else if (webkit_hit_test_result_context_is_selection(hit))
+        title = "Selected text";
+    else if (webkit_hit_test_result_context_is_editable(hit))
+        title = "Text field";
+    menu_open(title, uri, (const char *const *)labels->pdata, context_menu_activated, NULL);
+    g_ptr_array_free(labels, TRUE);
+    app.needs_present = TRUE;
+    return TRUE;
+}
+
 static void open_menu(void)
 {
     const char *items[] = {
@@ -1656,22 +1761,28 @@ static void handle_button(int button, gboolean pressed)
 {
     switch (button) {
     case BTN_A:
-        /* With the pointer hidden, A first only shows it: never click somewhere unseen */
+    case BTN_Y: { /* A: left click, Y: right click */
+        gboolean *swallow = button == BTN_A ? &app.swallow_a_release : &app.swallow_y_release;
+        /* With the pointer hidden, a click first only shows it: never click somewhere unseen */
         if (pressed && app.pointer_hidden) {
             app.pointer_hidden = FALSE;
             app.pointer_used_ms = now_ms();
-            app.swallow_a_release = TRUE;
+            *swallow = TRUE;
             app.needs_present = TRUE;
             return;
         }
-        if (!pressed && app.swallow_a_release) {
-            app.swallow_a_release = FALSE;
+        if (!pressed && *swallow) {
+            *swallow = FALSE;
             return;
         }
         app.pointer_used_ms = now_ms();
         app.hid_typing = FALSE; /* gamepad in use: fields bring up the on-screen keyboard again */
-        send_click(pressed);
+        if (button == BTN_A)
+            send_click(pressed);
+        else
+            send_button(3, pressed);
         return;
+    }
     }
     if (!pressed)
         return;
@@ -1684,7 +1795,6 @@ static void handle_button(int button, gboolean pressed)
             webkit_web_view_stop_loading(app.web_view);
         break;
     }
-    case BTN_Y: show_url_keyboard(); break;
     case BTN_X: webkit_web_view_reload(app.web_view); break;
     case BTN_L1: send_key(WPE_KEY_Page_Up); break;
     case BTN_R1: send_key(WPE_KEY_Page_Down); break;
@@ -2291,6 +2401,7 @@ int main(int argc, char **argv)
         .enter = osk_enter,
         .closed = osk_closed,
         .is_search = osk_is_search,
+        .paste_text = osk_paste_text,
     };
     if (!osk_init(app.renderer, SCREEN_W, SCREEN_H, font_path, &osk_callbacks))
         fprintf(stderr, "[wpe-tsp] on-screen keyboard unavailable\n");
@@ -2380,6 +2491,7 @@ int main(int argc, char **argv)
     g_signal_connect(app.web_view, "load-changed", G_CALLBACK(on_load_changed), NULL);
     g_signal_connect(app.web_view, "notify::title", G_CALLBACK(on_title_changed), NULL);
     g_signal_connect(app.web_view, "decide-policy", G_CALLBACK(on_decide_policy), NULL);
+    g_signal_connect(app.web_view, "context-menu", G_CALLBACK(on_context_menu), NULL);
     g_signal_connect(app.web_view, "notify::uri", G_CALLBACK(on_uri_changed), NULL);
     if (app.play_youtube)
         setup_embed_play(app.web_view);
