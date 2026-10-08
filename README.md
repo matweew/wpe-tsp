@@ -636,6 +636,8 @@ demuxers for MP4/WebM/Ogg/MP3/WAV, parsers, gst-libav decoders, Opus/Vorbis, GL 
   (`GST_GL_API=gles2`, `GST_GL_PLATFORM=egl` in `launch.sh`): it tries desktop OpenGL first, which the
   PowerVR driver lacks (no picture). Its X11 backend links `libGL.so.1`: a stub with just those GLX
   entry points (`scripts/libgl-stub.c`) keeps glvnd's `gl*` stubs out of the process.
+- **YUV to the GPU** (patch 0012): decoded I420/NV12 frames go to the compositor as they are and are
+  converted to RGB by its shader, not by a CPU `videoconvert`.
 - **Video sink:** WebKit's GStreamer GL sink is off (`WEBKIT_GST_DISABLE_GL_SINK=1` in `launch.sh`). With
   it, uploads and colour conversion ran on GStreamer's own GL thread and every frame reached the sink
   ~55 ms late: the decoder dropped nearly all of them (QoS) and video was a slideshow with fine audio,
@@ -739,6 +741,7 @@ All in `patches/`, applied by `scripts/build-webkit.sh` to the 2.54.0 release ta
 | `0009-angle-gcc12-resourcemap-static-assert` | ANGLE doesn't compile with GCC 12, which evaluates a `static_assert` inside a discarded `if constexpr` branch (`ResourceMap.h`): made it a runtime `ASSERT`. |
 | `0010-angle-gles-proc-dlsym-fallback` | ANGLE's GL backend looks functions up with `eglGetProcAddress`, then in `libEGL`. PowerVR returns NULL for core GLES functions and exports them only from `libGLESv2`: look there as well (same issue as patch 0006). |
 | `0011-gcc12-coroutine-awaitable-temporaries` | GCC 12.2 miscompiles temporaries in `co_await` expressions: an awaitable's captured `Ref` is released once too often. Entering fullscreen (YouTube's player) deleted the page while `WebFullScreenManagerProxy::enterFullScreen` still used it and the browser aborted (`crashDueToCheckedPtrToDeadObject`). Every awaitable in the fullscreen code and the page's coordinate helpers is kept in a named local instead. |
+| `0012-yuv-video-frames-uploaded-to-gpu` | Without GStreamer GL, WebKit's video sink only took BGRx/BGRA, so a `videoconvert` turned every software-decoded frame into RGB on the CPU (~0.5 core at 720p30) and frames were shown unevenly (22 of 30 fps). The sink now prefers I420/YV12/NV12/NV21; the compositor uploads the planes into R8/RG8 textures and converts with its YUV shader: 30 of 30 fps, ~52% CPU instead of ~75% (720p30 VP9, 8 Mbit/s). |
 
 ## Repository layout
 

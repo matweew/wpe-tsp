@@ -1,0 +1,172 @@
+Video frames from software decoders reached the compositor only as BGRx/BGRA without GStreamer GL:
+a videoconvert converted every frame on the CPU (~0.5 core for 720p30 on the A133) before the
+compositor uploaded it. Let the non-GL sink take I420/YV12/NV12/NV21 too (preferred), upload each
+plane into an R8/RG8 texture (GLES 3) in the compositor thread and draw them with the existing YUV
+shader (CoordinatedPlatformLayerBufferYUV), as for GStreamer GL frames.
+
+--- a/Source/WebCore/platform/graphics/gstreamer/VideoSinkGStreamer.cpp
++++ b/Source/WebCore/platform/graphics/gstreamer/VideoSinkGStreamer.cpp
+@@ -48,7 +48,11 @@
+ #define GST_CAPS_FORMAT "{ xRGB, ARGB }"
+ #endif
+ 
+-#define WEBKIT_VIDEO_SINK_PAD_CAPS GST_VIDEO_CAPS_MAKE_WITH_FEATURES(GST_CAPS_FEATURE_META_GST_VIDEO_GL_TEXTURE_UPLOAD_META, GST_CAPS_FORMAT) ";" GST_VIDEO_CAPS_MAKE(GST_CAPS_FORMAT)
++// YUV in system memory too, preferred: the compositor uploads the planes and converts them to RGB on
++// the GPU (CoordinatedPlatformLayerBufferVideo), instead of a videoconvert on the CPU per frame.
++#define GST_CAPS_FORMAT_YUV "{ I420, YV12, NV12, NV21 }"
++
++#define WEBKIT_VIDEO_SINK_PAD_CAPS GST_VIDEO_CAPS_MAKE_WITH_FEATURES(GST_CAPS_FEATURE_META_GST_VIDEO_GL_TEXTURE_UPLOAD_META, GST_CAPS_FORMAT) ";" GST_VIDEO_CAPS_MAKE(GST_CAPS_FORMAT_YUV) ";" GST_VIDEO_CAPS_MAKE(GST_CAPS_FORMAT)
+ 
+ static GstStaticPadTemplate s_videoSinkTemplate = GST_STATIC_PAD_TEMPLATE("sink", GST_PAD_SINK, GST_PAD_ALWAYS, GST_STATIC_CAPS(WEBKIT_VIDEO_SINK_PAD_CAPS));
+ 
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferVideo.h
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferVideo.h
+@@ -60,6 +60,10 @@
+ 
+     Ref<VideoFrameGStreamer> m_videoFrame;
+     std::optional<GstMappedFrame> m_mappedVideoFrame;
++    // YUV frames in system memory: one texture per plane, uploaded in the compositor thread
++    bool createBufferFromMappedYUVFrame();
++    std::array<unsigned, 4> m_planeTextures { };
++    unsigned m_planeTextureCount { 0 };
+     std::optional<GstVideoDecoderPlatform> m_videoDecoderPlatform;
+     std::unique_ptr<CoordinatedPlatformLayerBuffer> m_buffer;
+ };
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferVideo.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferVideo.cpp
+@@ -32,8 +32,10 @@
+ #include "CoordinatedPlatformLayerBufferExternalOES.h"
+ #include "CoordinatedPlatformLayerBufferRGB.h"
+ #include "CoordinatedPlatformLayerBufferYUV.h"
++#include "GLContext.h"
+ #include "GraphicsTypesGL.h"
+ #include "TextureMapper.h"
++#include <epoxy/gl.h>
+ 
+ #if USE(GSTREAMER_GL)
+ // Include the <epoxy/gl.h> header before <gst/gl/gl.h>.
+@@ -65,7 +67,13 @@
+ {
+ }
+ 
+-CoordinatedPlatformLayerBufferVideo::~CoordinatedPlatformLayerBufferVideo() = default;
++CoordinatedPlatformLayerBufferVideo::~CoordinatedPlatformLayerBufferVideo()
++{
++    // Plane textures of a YUV frame; without a current context (another thread) they would leak, as
++    // GL ignores the call, but buffers are released in the compositor thread that made them
++    if (m_planeTextureCount && GLContext::current())
++        glDeleteTextures(m_planeTextureCount, m_planeTextures.data());
++}
+ 
+ std::unique_ptr<CoordinatedPlatformLayerBuffer> CoordinatedPlatformLayerBufferVideo::copyBuffer() const
+ {
+@@ -83,7 +91,6 @@
+     return CoordinatedPlatformLayerBufferRGB::create(WTF::move(texture), m_flags, nullptr);
+ }
+ 
+-#if USE(GBM) || USE(GSTREAMER_GL)
+ static std::pair<CoordinatedPlatformLayerBufferYUV::YuvToRgbColorSpace, CoordinatedPlatformLayerBufferYUV::TransferFunction> yuvColorSpaceFromVideoInfo(const GstVideoInfo& info)
+ {
+     // Default to bt601. This is the same behaviour as GStreamer's glcolorconvert element.
+@@ -101,7 +108,6 @@
+         yuvToRgbColorSpace = CoordinatedPlatformLayerBufferYUV::YuvToRgbColorSpace::Smpte240M;
+     return { yuvToRgbColorSpace, transferFunction };
+ }
+-#endif
+ 
+ std::unique_ptr<CoordinatedPlatformLayerBuffer> CoordinatedPlatformLayerBufferVideo::createBufferIfNeeded(bool gstGLEnabled)
+ {
+@@ -169,7 +175,6 @@
+ }
+ #endif // USE(GBM) && GST_CHECK_VERSION(1, 24, 0)
+ 
+-#if USE(GSTREAMER_GL)
+ static std::optional<CoordinatedPlatformLayerBufferYUV::Format> yuvFormatFromGstVideoFormat(GstVideoFormat format)
+ {
+     switch (format) {
+@@ -203,6 +208,7 @@
+     return std::nullopt;
+ }
+ 
++#if USE(GSTREAMER_GL)
+ std::unique_ptr<CoordinatedPlatformLayerBuffer> CoordinatedPlatformLayerBufferVideo::createBufferFromGLMemory()
+ {
+     const auto& sample = m_videoFrame->sample();
+@@ -259,6 +265,67 @@
+ }
+ #endif
+ 
++// I420/YV12/NV12/NV21 in system memory (software decoders): upload each plane into a one- or two-
++// channel texture (R8, RG8: OpenGL ES 3) and draw them with the YUV shader, as for GStreamer GL frames.
++bool CoordinatedPlatformLayerBufferVideo::createBufferFromMappedYUVFrame()
++{
++    auto* info = m_mappedVideoFrame->info();
++    auto gstFormat = GST_VIDEO_INFO_FORMAT(info);
++    if (gstFormat != GST_VIDEO_FORMAT_I420 && gstFormat != GST_VIDEO_FORMAT_YV12 && gstFormat != GST_VIDEO_FORMAT_NV12 && gstFormat != GST_VIDEO_FORMAT_NV21)
++        return false;
++    auto* context = GLContext::current();
++    if (!context || context->version() < 300)
++        return false;
++    auto format = yuvFormatFromGstVideoFormat(gstFormat);
++    if (!format)
++        return false;
++
++    unsigned numberOfPlanes = GST_VIDEO_INFO_N_PLANES(info);
++    glGenTextures(numberOfPlanes, m_planeTextures.data());
++    m_planeTextureCount = numberOfPlanes;
++    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
++    for (unsigned plane = 0; plane < numberOfPlanes; ++plane) {
++        // The plane's first component gives its size; two components (NV12/NV21 chroma) interleave
++        unsigned component = 0;
++        unsigned components = 0;
++        for (unsigned c = 0; c < GST_VIDEO_INFO_N_COMPONENTS(info); ++c) {
++            if (GST_VIDEO_INFO_COMP_PLANE(info, c) != plane)
++                continue;
++            if (!components)
++                component = c;
++            ++components;
++        }
++        int width = GST_VIDEO_INFO_COMP_WIDTH(info, component);
++        int height = GST_VIDEO_INFO_COMP_HEIGHT(info, component);
++        bool twoChannels = components == 2;
++        int stride = m_mappedVideoFrame->planeStride(plane);
++        glBindTexture(GL_TEXTURE_2D, m_planeTextures[plane]);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++        glPixelStorei(GL_UNPACK_ROW_LENGTH, stride / (twoChannels ? 2 : 1));
++        glTexImage2D(GL_TEXTURE_2D, 0, twoChannels ? GL_RG8 : GL_R8, width, height, 0, twoChannels ? GL_RG : GL_RED,
++            GL_UNSIGNED_BYTE, m_mappedVideoFrame->planeData(plane).data());
++    }
++    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
++    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
++    glBindTexture(GL_TEXTURE_2D, 0);
++
++    std::array<unsigned, 4> yuvPlane;
++    std::array<unsigned, 4> yuvPlaneOffset;
++    for (unsigned i = 0; i < numberOfPlanes; ++i) {
++        yuvPlane[i] = m_mappedVideoFrame->componentPlane(i);
++        yuvPlaneOffset[i] = m_mappedVideoFrame->componentPlaneOffset(i);
++    }
++    auto [yuvToRgbColorSpace, transferFunction] = yuvColorSpaceFromVideoInfo(*info);
++    std::array<unsigned, 4> planes = m_planeTextures;
++    m_buffer = CoordinatedPlatformLayerBufferYUV::create(*format, numberOfPlanes, WTF::move(planes), WTF::move(yuvPlane), WTF::move(yuvPlaneOffset),
++        yuvToRgbColorSpace, transferFunction, m_size, m_flags, nullptr);
++    m_mappedVideoFrame = std::nullopt;
++    return true;
++}
++
+ void CoordinatedPlatformLayerBufferVideo::createBufferFromMappedFrameIfNeeded()
+ {
+     if (!m_mappedVideoFrame)
+@@ -278,6 +345,9 @@
+     if (m_buffer)
+         return;
+ 
++    if (createBufferFromMappedYUVFrame())
++        return;
++
+     OptionSet<BitmapTexture::Flags> textureFlags = { BitmapTexture::Flags::UseBGRALayout };
+     if (GST_VIDEO_INFO_HAS_ALPHA(m_mappedVideoFrame->info()))
+         textureFlags.add(BitmapTexture::Flags::SupportsAlpha);
