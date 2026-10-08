@@ -21,10 +21,12 @@ you drive it with the gamepad, a USB keyboard and mouse, or the on-screen keyboa
   copying (zero-copy frames): ~60 fps scrolling.
 - 🧠 **Made for 1 GB of RAM**: one page process, memory limits and a low-memory watchdog keep the device
   responsive; the mobile site versions it asks for are much lighter.
-- 📺 **YouTube in hardware-accelerated mpv**: video pages play in the bundled mpv with the Allwinner
-  H.264 hardware decoder (720p at ~14% CPU). The page stays open for comments and likes, with a
-  **▶ Play in mpv** button to watch again. Embedded YouTube players and `<video>`/`<audio>` on any site
-  play the same way.
+- 📺 **Video and audio in pages**: `<video>`/`<audio>`, YouTube included, play right in the page
+  (GStreamer: H.264, VP9, AAC, Opus, MP3…, decoded in software).
+- 🚀 **Or YouTube in hardware-accelerated mpv** (`PLAY_YOUTUBE_IN_MPV=1`): video pages play in the
+  bundled mpv with the Allwinner H.264 hardware decoder (720p at ~14% CPU). The page stays open for
+  comments and likes, with a **▶ Play in mpv** button to watch again. Embedded YouTube players and
+  `<video>`/`<audio>` on any site play the same way.
 - 🔄 **yt-dlp updates itself**: the browser checks for new releases daily and installs them after a
   checksum check, so YouTube keeps working.
 - 🛡️ **Ad and tracker blocking**: EasyList + EasyPrivacy (~94,000 rules) built into WebKit, pages load
@@ -134,7 +136,7 @@ Edit `Apps/WPE/settings.conf` on the SD card; changes apply at the next start.
 | `SCALE` | `1.5` | Page zoom: 1.5 = text 1.5× larger |
 | `USER_AGENT` | `mobile` | `mobile` (iPhone Safari, lighter sites), `desktop`, or a full user-agent string |
 | `AD_BLOCK` | `1` | Ad and tracker blocking; `0` = off |
-| `PLAY_YOUTUBE_IN_MPV` | `1` | Play YouTube and page videos in mpv; `0` = off |
+| `PLAY_YOUTUBE_IN_MPV` | `0` | `1` = play YouTube and page videos in mpv (hardware H.264, smooth 720p); `0` = in the page (software) |
 | `DOWNLOAD_DIR` | `/mnt/SDCARD/Downloads` | Where downloads go |
 | `HISTORY_SIZE` | `20` | Pages kept in History (`0` = none, max 60) |
 | `POINTER_HIDE_SECONDS` | `10` | Hide the idle pointer after this long (`0` = never) |
@@ -161,7 +163,10 @@ Keep a Latin layout such as `us` in the list for typing addresses.
 
 ## ⚠️ Known limitations
 
-- No audio/video *inside* pages (Web Audio, WebRTC, `blob:` players): videos play in mpv instead.
+- Video inside pages is decoded in software: ~70% CPU, and YouTube drops to 240p–360p when frames are
+  dropped. For smooth 720p, set `PLAY_YOUTUBE_IN_MPV=1` (mpv, hardware decoding).
+- No video calls (WebRTC) and no DRM-protected video (Netflix, Spotify…).
+- The desktop YouTube site needs more memory than the device has; the default mobile one works.
 - One page at a time, no tabs.
 - Recently ended YouTube live streams can't be played until YouTube finishes processing them (usually
   within hours).
@@ -329,7 +334,8 @@ needs hard links, which exFAT lacks, so it lives on the internal ext4 partition)
 | WPE WebKit 2.54.0 | release tarball [wpewebkit-2.54.0.tar.xz](https://wpewebkit.org/releases/wpewebkit-2.54.0.tar.xz) from [wpewebkit.org/release](https://wpewebkit.org/release/), downloaded by `scripts/build-webkit.sh` into `src/` and patched with `patches/` |
 | SDL2 headers | TrimUI's [toolchain_sdk_smartpro](https://github.com/trimui/toolchain_sdk_smartpro) release `SDL2-2.26.1.GE8300.tgz` (Dockerfile) |
 | SDL2 / SDL2_ttf libraries to link against | copied from the device by `scripts/fetch-device-sdl.sh` |
-| Build-container packages | Debian bookworm (amd64 + arm64 multiarch), see `Dockerfile` |
+| Build-container packages | Debian bookworm (amd64 + arm64 multiarch), see `Dockerfile`; GStreamer 1.22 and its plugins (in-page video) are bundled from there |
+| FFmpeg 5.1.9 (in-page video) | [ffmpeg-5.1.9.tar.xz](https://ffmpeg.org/releases/ffmpeg-5.1.9.tar.xz), built by `scripts/build-ffmpeg.sh` with decoders only (LGPL), replacing Debian's for gst-libav |
 | EasyList, EasyPrivacy | [easylist.to](https://easylist.to/), downloaded by `scripts/package.sh` |
 | XKB layouts | Debian's `xkb-data` ([xkeyboard-config](https://gitlab.freedesktop.org/xkeyboard-config/xkeyboard-config)), compiled with `xkbcli` from `libxkbcommon-tools` |
 | `runtime/yt-dlp` *(not in git)* | `yt-dlp_linux_aarch64` from [yt-dlp releases](https://github.com/yt-dlp/yt-dlp/releases/latest). Only the initial copy: the browser updates `bin/yt-dlp` on the device itself |
@@ -375,6 +381,9 @@ docker build -t wpe-tsp-builder .
 echo root@192.168.31.36 > .device    # the device's ssh target, used by all device scripts
 scripts/fetch-device-sdl.sh
 
+# 3a. Minimal FFmpeg for GStreamer's gst-libav (in-page video decoders, ~4 MB, a few minutes)
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/work wpe-tsp-builder scripts/build-ffmpeg.sh
+
 # 3. Build WPE WebKit: downloads the 2.54.0 tarball into src/, applies patches/, builds and
 #    installs into build/stage/ (first run ~1-1.5 h; the argument is the number of jobs)
 docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/work \
@@ -388,8 +397,8 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/work wpe-tsp-builder scrip
 (cd dist && zip -qr -9 ../WPE-<version>.zip WPE)
 ```
 
-- `scripts/build-webkit.sh` holds the WebKit CMake options (see the `-D…` list). Disabled: GStreamer
-  (video/audio/WebRTC/Web Codecs/EME), GBM/libdrm, the DRM and Wayland platforms, the legacy libwpe API,
+- `scripts/build-webkit.sh` holds the WebKit CMake options (see the `-D…` list). GStreamer is on
+  (video, audio, Web Audio, Media Source, GStreamer GL). Disabled: WebRTC, Web Codecs, EME, GBM/libdrm, the DRM and Wayland platforms, the legacy libwpe API,
   the GPU process, bubblewrap sandbox, WebDriver, spellcheck, speech, gamepad API, ATK, AVIF/JPEG XL,
   hyphenation, introspection and docs. WebGL is built (ANGLE, +6 MB) and switched at runtime.
 - To rebuild WebKit after editing `src/`, run step 3 again (incremental). Patches are applied only once
@@ -584,7 +593,35 @@ turns it off: pages then see no WebGL and fall back to their 2D versions).
   way, to both the mobile and the desktop user agent;
 - the reported GPU is "Apple GPU": WebKit masks the real renderer name behind the iPhone user agent.
 
-### Video playback in mpv
+### Video in pages
+
+WebKit plays `<video>`/`<audio>` through GStreamer 1.22 (Debian's, bundled): Media Source (YouTube),
+plain files, Web Audio. `package.sh` ships only the plugins playback needs (`lib/gstreamer-1.0`:
+demuxers for MP4/WebM/Ogg/MP3/WAV, parsers, gst-libav decoders, Opus/Vorbis, GL upload, ALSA).
+
+- **Decoders:** gst-libav with a minimal FFmpeg 5.1.9 (`scripts/build-ffmpeg.sh`: H.264, VP8/9, MPEG-4,
+  AAC, MP3, Opus, Vorbis, FLAC; no external libraries, LGPL). Debian's FFmpeg linked ~40 libraries (x264,
+  x265, aom, rav1e, codec2, flite, librsvg…: 150+ MB); the same release keeps sonames and symbol
+  versions, so Debian's plugin loads it unchanged. FFmpeg's AV1 decoder is hidden
+  (`GST_PLUGIN_FEATURE_RANK=avdec_av1:NONE`), so sites pick H.264 or VP9.
+- **GL:** frames go to the GPU through GStreamer GL, which has to be told to use GLES via EGL
+  (`GST_GL_API=gles2`, `GST_GL_PLATFORM=egl` in `launch.sh`): it tries desktop OpenGL first, which the
+  PowerVR driver lacks (no picture). Its X11 backend links `libGL.so.1`: a stub with just those GLX
+  entry points (`scripts/libgl-stub.c`) keeps glvnd's `gl*` stubs out of the process.
+- **Audio:** `alsasink` with the device's own libasound (not bundled), so its `asound.conf` (dmix,
+  software volume) applies.
+- **Registry:** only the bundled plugins (`GST_PLUGIN_SYSTEM_PATH`), scanned in-process
+  (`GST_REGISTRY_FORK=no`) and cached in `/mnt/UDISK/wpe-browser/cache/gstreamer-registry.bin`.
+- **Measured** (mobile YouTube, whole system, 4 cores): ~70% CPU, of it ~1.3–1.5 cores decoding (VP9
+  and H.264 cost about the same), the rest GL upload, compositing and the page; 290–380 MB available.
+  At 720p about a quarter of the frames are dropped, and YouTube's automatic quality settles at
+  240p–360p, which plays smoothly (1 frame dropped of 1552 at 240p). The desktop site is closed by
+  the low-memory watchdog.
+- With `PLAY_YOUTUBE_IN_MPV=1` the page's own player is kept paused under the **▶ Play in mpv** buttons
+  (a capture-phase `play` listener), so it doesn't play along with mpv.
+- YouTube's *Stats for nerds* (gear menu → bottom) shows the codec, resolution and dropped frames.
+
+### Video playback in mpv (`PLAY_YOUTUBE_IN_MPV=1`)
 
 Playback (`app/player.c`) uses the bundled `mpv/mpv` and `bin/yt-dlp`, with the options `--no-ytdl --config-dir=mpv`, subtitle fonts from `share/fonts`; yt-dlp format: H.264 +
 AAC up to 720p, the screen's resolution. H.264 is decoded by the Allwinner hardware decoder
@@ -617,19 +654,19 @@ back to FFmpeg's software decoders automatically. Measured with mpv on screen (2
 - While mpv plays, the page is unmapped (hidden), so WebKit stops rendering it and throttles its timers.
   Measured with a YouTube watch page loaded: MemAvailable stayed above 320 MB during playback.
 - When mpv exits, the window is recreated, the buttons pressed meanwhile are discarded, and the browser
-  **stays on the video page**. The page's own player (which could only show YouTube's "can't play"
-  notice) is covered by the video's thumbnail with a **▶ Play in mpv** button: a user script on YouTube's
+  **stays on the video page**. The page's own player (kept paused) is covered by the video's thumbnail with a **▶ Play in mpv** button: a user script on YouTube's
   top frame that follows in-page navigation and posts the page address to the `wpeTspPlay` script message
   handler. The same video doesn't play again when YouTube rewrites the page URL; leaving the page and
   coming back to it (or clicking another video) plays again.
-- **Embedded YouTube players** (`youtube.com/embed/…` and `youtube-nocookie.com` iframes on other sites)
-  can't play in this build. A user script injected into those frames covers them with a **▶ Play in mpv**
+- **Embedded YouTube players** (`youtube.com/embed/…` and `youtube-nocookie.com` iframes on other sites):
+  a user script injected into those frames pauses their player and covers it with a **▶ Play in mpv**
   button that posts to the same handler. The buttons are built with DOM calls, because YouTube enforces
   Trusted Types, which reject `innerHTML` strings.
 - **`<video>`/`<audio>` elements** on any page are replaced with a box (keeping the element's size and
-  poster) labelled *Play video · file* or *Play audio · file*. A click sends the source URL (`src` or
-  the first `<source>`) to mpv, including HLS `.m3u8` and DASH `.mpd`. Only `blob:` sources, which exist
-  only inside the page's JavaScript, can't be played.
+  poster) labelled *Play video · file* or *Play audio · file*; the hidden element is kept from loading
+  and playing. A click sends the source URL (`src` or the first `<source>`) to mpv, including HLS
+  `.m3u8` and DASH `.mpd`. `blob:` sources (Media Source), which exist only inside the page's
+  JavaScript, play in the page.
 - **Video/audio files:** the download prompt offers **Play** / Download / Cancel, which plays the file's
   URL directly in mpv. On `wpe-tsp://downloads`, saved video/audio files show **A: play** and play from
   the SD card.

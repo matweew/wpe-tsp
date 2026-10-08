@@ -2357,7 +2357,7 @@ int main(int argc, char **argv)
     else if (start_env && *start_env && g_ascii_strcasecmp(start_env, "home") && g_ascii_strcasecmp(start_env, "last"))
         fprintf(stderr, "[wpe-tsp] START_PAGE=%s unknown, using home\n", start_env);
     const char *play_env = g_getenv("WPE_TSP_PLAY_YOUTUBE_IN_MPV");
-    app.play_youtube = !play_env || strcmp(play_env, "0");
+    app.play_youtube = play_env && *play_env && strcmp(play_env, "0"); /* default 0: videos play in the page */
     PlayerCallbacks player_callbacks = {
         .release_display = player_release_display,
         .restore_display = player_restore_display,
