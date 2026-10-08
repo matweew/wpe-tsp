@@ -2,8 +2,10 @@ Video frames from software decoders reached the compositor only as BGRx/BGRA wit
 a videoconvert converted every frame on the CPU (~0.5 core for 720p30 on the A133) before the
 compositor uploaded it. Let the non-GL sink take I420/YV12/NV12/NV21 too (preferred), upload each
 plane into an R8/RG8 texture (GLES 3) in the compositor thread and draw them with the existing YUV
-shader (CoordinatedPlatformLayerBufferYUV), as for GStreamer GL frames.
+shader (CoordinatedPlatformLayerBufferYUV), as for GStreamer GL frames. The plane textures are
+kept for the next frames of the same size (glTexSubImage2D), not allocated per frame.
 
+--- a/Source/WebCore/platform/graphics/gstreamer/VideoSinkGStreamer.cpp
 --- a/Source/WebCore/platform/graphics/gstreamer/VideoSinkGStreamer.cpp
 +++ b/Source/WebCore/platform/graphics/gstreamer/VideoSinkGStreamer.cpp
 @@ -48,7 +48,11 @@
@@ -21,13 +23,29 @@ shader (CoordinatedPlatformLayerBufferYUV), as for GStreamer GL frames.
  
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferVideo.h
 +++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferVideo.h
-@@ -60,6 +60,10 @@
+@@ -42,6 +42,14 @@
+ 
+     std::unique_ptr<CoordinatedPlatformLayerBuffer> copyBuffer() const;
+ 
++    // A YUV plane texture (see m_planeTextures)
++    struct PlaneTexture {
++        unsigned id { 0 };
++        int width { 0 };
++        int height { 0 };
++        bool twoChannels { false };
++    };
++
+ private:
+     void paintToTextureMapper(TextureMapper&, const FloatRect&, const TransformationMatrix& modelViewMatrix = TransformationMatrix(), float opacity = 1.0) override;
+ 
+@@ -60,6 +68,11 @@
  
      Ref<VideoFrameGStreamer> m_videoFrame;
      std::optional<GstMappedFrame> m_mappedVideoFrame;
-+    // YUV frames in system memory: one texture per plane, uploaded in the compositor thread
++    // YUV frames in system memory: one texture per plane, uploaded in the compositor thread into
++    // textures reused from frame to frame (allocating them per frame was costly)
 +    bool createBufferFromMappedYUVFrame();
-+    std::array<unsigned, 4> m_planeTextures { };
++    std::array<PlaneTexture, 4> m_planeTextures { };
 +    unsigned m_planeTextureCount { 0 };
      std::optional<GstVideoDecoderPlatform> m_videoDecoderPlatform;
      std::unique_ptr<CoordinatedPlatformLayerBuffer> m_buffer;
@@ -45,22 +63,58 @@ shader (CoordinatedPlatformLayerBufferYUV), as for GStreamer GL frames.
  
  #if USE(GSTREAMER_GL)
  // Include the <epoxy/gl.h> header before <gst/gl/gl.h>.
-@@ -65,7 +67,13 @@
+@@ -65,7 +67,49 @@
  {
  }
  
 -CoordinatedPlatformLayerBufferVideo::~CoordinatedPlatformLayerBufferVideo() = default;
++// Plane textures of YUV frames, kept for the next frames of the same size: allocating 1080p
++// textures 60 times a second cost the compositor more than the uploads themselves. Per thread, as
++// textures belong to the compositor thread's context.
++static constexpr unsigned s_maxFreePlaneTextures = 12;
++static thread_local Vector<CoordinatedPlatformLayerBufferVideo::PlaneTexture>* s_freePlaneTextures;
++
 +CoordinatedPlatformLayerBufferVideo::~CoordinatedPlatformLayerBufferVideo()
 +{
-+    // Plane textures of a YUV frame; without a current context (another thread) they would leak, as
-+    // GL ignores the call, but buffers are released in the compositor thread that made them
-+    if (m_planeTextureCount && GLContext::current())
-+        glDeleteTextures(m_planeTextureCount, m_planeTextures.data());
++    // Without a current context (another thread) the textures would leak, as GL ignores the call;
++    // buffers are released in the compositor thread that made them
++    if (!m_planeTextureCount || !GLContext::current())
++        return;
++    if (!s_freePlaneTextures)
++        s_freePlaneTextures = new Vector<PlaneTexture>;
++    for (unsigned i = 0; i < m_planeTextureCount; ++i) {
++        if (s_freePlaneTextures->size() < s_maxFreePlaneTextures)
++            s_freePlaneTextures->append(m_planeTextures[i]);
++        else
++            glDeleteTextures(1, &m_planeTextures[i].id);
++    }
++}
++
++static CoordinatedPlatformLayerBufferVideo::PlaneTexture acquirePlaneTexture(int width, int height, bool twoChannels)
++{
++    if (s_freePlaneTextures) {
++        for (size_t i = 0; i < s_freePlaneTextures->size(); ++i) {
++            auto texture = s_freePlaneTextures->at(i);
++            if (texture.width == width && texture.height == height && texture.twoChannels == twoChannels) {
++                s_freePlaneTextures->removeAt(i);
++                return texture;
++            }
++        }
++    }
++    CoordinatedPlatformLayerBufferVideo::PlaneTexture texture { 0, width, height, twoChannels };
++    glGenTextures(1, &texture.id);
++    glBindTexture(GL_TEXTURE_2D, texture.id);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    glTexImage2D(GL_TEXTURE_2D, 0, twoChannels ? GL_RG8 : GL_R8, width, height, 0, twoChannels ? GL_RG : GL_RED, GL_UNSIGNED_BYTE, nullptr);
++    return texture;
 +}
  
  std::unique_ptr<CoordinatedPlatformLayerBuffer> CoordinatedPlatformLayerBufferVideo::copyBuffer() const
  {
-@@ -83,7 +91,6 @@
+@@ -83,7 +127,6 @@
      return CoordinatedPlatformLayerBufferRGB::create(WTF::move(texture), m_flags, nullptr);
  }
  
@@ -68,7 +122,7 @@ shader (CoordinatedPlatformLayerBufferYUV), as for GStreamer GL frames.
  static std::pair<CoordinatedPlatformLayerBufferYUV::YuvToRgbColorSpace, CoordinatedPlatformLayerBufferYUV::TransferFunction> yuvColorSpaceFromVideoInfo(const GstVideoInfo& info)
  {
      // Default to bt601. This is the same behaviour as GStreamer's glcolorconvert element.
-@@ -101,7 +108,6 @@
+@@ -101,7 +144,6 @@
          yuvToRgbColorSpace = CoordinatedPlatformLayerBufferYUV::YuvToRgbColorSpace::Smpte240M;
      return { yuvToRgbColorSpace, transferFunction };
  }
@@ -76,7 +130,7 @@ shader (CoordinatedPlatformLayerBufferYUV), as for GStreamer GL frames.
  
  std::unique_ptr<CoordinatedPlatformLayerBuffer> CoordinatedPlatformLayerBufferVideo::createBufferIfNeeded(bool gstGLEnabled)
  {
-@@ -169,7 +175,6 @@
+@@ -169,7 +211,6 @@
  }
  #endif // USE(GBM) && GST_CHECK_VERSION(1, 24, 0)
  
@@ -84,7 +138,7 @@ shader (CoordinatedPlatformLayerBufferYUV), as for GStreamer GL frames.
  static std::optional<CoordinatedPlatformLayerBufferYUV::Format> yuvFormatFromGstVideoFormat(GstVideoFormat format)
  {
      switch (format) {
-@@ -203,6 +208,7 @@
+@@ -203,6 +244,7 @@
      return std::nullopt;
  }
  
@@ -92,7 +146,7 @@ shader (CoordinatedPlatformLayerBufferYUV), as for GStreamer GL frames.
  std::unique_ptr<CoordinatedPlatformLayerBuffer> CoordinatedPlatformLayerBufferVideo::createBufferFromGLMemory()
  {
      const auto& sample = m_videoFrame->sample();
-@@ -259,6 +265,67 @@
+@@ -259,6 +301,65 @@
  }
  #endif
  
@@ -112,8 +166,6 @@ shader (CoordinatedPlatformLayerBufferYUV), as for GStreamer GL frames.
 +        return false;
 +
 +    unsigned numberOfPlanes = GST_VIDEO_INFO_N_PLANES(info);
-+    glGenTextures(numberOfPlanes, m_planeTextures.data());
-+    m_planeTextureCount = numberOfPlanes;
 +    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 +    for (unsigned plane = 0; plane < numberOfPlanes; ++plane) {
 +        // The plane's first component gives its size; two components (NV12/NV21 chroma) interleave
@@ -130,14 +182,12 @@ shader (CoordinatedPlatformLayerBufferYUV), as for GStreamer GL frames.
 +        int height = GST_VIDEO_INFO_COMP_HEIGHT(info, component);
 +        bool twoChannels = components == 2;
 +        int stride = m_mappedVideoFrame->planeStride(plane);
-+        glBindTexture(GL_TEXTURE_2D, m_planeTextures[plane]);
-+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++        m_planeTextures[plane] = acquirePlaneTexture(width, height, twoChannels);
++        m_planeTextureCount = plane + 1;
++        glBindTexture(GL_TEXTURE_2D, m_planeTextures[plane].id);
 +        glPixelStorei(GL_UNPACK_ROW_LENGTH, stride / (twoChannels ? 2 : 1));
-+        glTexImage2D(GL_TEXTURE_2D, 0, twoChannels ? GL_RG8 : GL_R8, width, height, 0, twoChannels ? GL_RG : GL_RED,
-+            GL_UNSIGNED_BYTE, m_mappedVideoFrame->planeData(plane).data());
++        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, twoChannels ? GL_RG : GL_RED, GL_UNSIGNED_BYTE,
++            m_mappedVideoFrame->planeData(plane).data());
 +    }
 +    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 +    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
@@ -150,7 +200,9 @@ shader (CoordinatedPlatformLayerBufferYUV), as for GStreamer GL frames.
 +        yuvPlaneOffset[i] = m_mappedVideoFrame->componentPlaneOffset(i);
 +    }
 +    auto [yuvToRgbColorSpace, transferFunction] = yuvColorSpaceFromVideoInfo(*info);
-+    std::array<unsigned, 4> planes = m_planeTextures;
++    std::array<unsigned, 4> planes { };
++    for (unsigned i = 0; i < numberOfPlanes; ++i)
++        planes[i] = m_planeTextures[i].id;
 +    m_buffer = CoordinatedPlatformLayerBufferYUV::create(*format, numberOfPlanes, WTF::move(planes), WTF::move(yuvPlane), WTF::move(yuvPlaneOffset),
 +        yuvToRgbColorSpace, transferFunction, m_size, m_flags, nullptr);
 +    m_mappedVideoFrame = std::nullopt;
@@ -160,7 +212,7 @@ shader (CoordinatedPlatformLayerBufferYUV), as for GStreamer GL frames.
  void CoordinatedPlatformLayerBufferVideo::createBufferFromMappedFrameIfNeeded()
  {
      if (!m_mappedVideoFrame)
-@@ -278,6 +345,9 @@
+@@ -278,6 +379,9 @@
      if (m_buffer)
          return;
  

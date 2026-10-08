@@ -31,7 +31,6 @@ typedef struct {
     void (*enter)(const char *line, void *user_data);     /* URL mode: line; form mode: NULL */
     void (*closed)(void *user_data);                      /* keyboard dismissed (B) */
     bool (*is_search)(const char *line, void *user_data); /* URL mode: would ENTER search? */
-    char *(*paste_text)(void *user_data);                 /* Paste key: clipboard text (g_free), or NULL */
     void *user_data;
 } OskCallbacks;
 

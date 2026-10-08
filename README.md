@@ -115,9 +115,9 @@ own (e.g. desktop YouTube's player) get the right click instead.
 | START / ↵ | Enter (**Go** or **Search** in the address bar) |
 
 In the address bar the current URL opens selected (typing replaces it). Up from the top row reaches **✕**:
-A clears the line, left/right move the cursor. **Paste** (bottom row) inserts the text last copied in the
-browser (right click → Copy or Copy Link Address, Ctrl+C on a USB keyboard). The clipboard is the
-browser's own: not shared with other apps and empty after a restart.
+A clears the line, left/right move the cursor. To paste into a page's text field, close the keyboard (B)
+and right click the field (Y → Paste); Ctrl+V on a USB keyboard. The clipboard is the browser's own:
+not shared with other apps and empty after a restart.
 
 **Keyboard and mouse** (USB, picked up when connected):
 
@@ -177,8 +177,9 @@ Keep a Latin layout such as `us` in the list for typing addresses.
 ## ⚠️ Known limitations
 
 - In pages, only H.264 is decoded in hardware; VP9 and other codecs use the CPU (720p30 VP9 at
-  8 Mbit/s: ~52% CPU). 1080p60 H.264 drops frames even in hardware (copying 1080p frames out of the
-  decoder and to the GPU); 720p plays smoothly.
+  8 Mbit/s: ~52% CPU). 1080p60 video shows ~22 frames/s: every frame is decoded, but composing a frame
+  with a 1080p picture takes the compositor two screen refreshes; 720p plays smoothly (mpv, drawing
+  straight to the screen, shows ~90% of 1080p60).
 - No video calls (WebRTC) and no DRM-protected video (Netflix, Spotify…).
 - The desktop YouTube site needs more memory than the device has; the default mobile one works.
 - One page at a time, no tabs.
@@ -640,7 +641,10 @@ demuxers for MP4/WebM/Ogg/MP3/WAV, parsers, gst-libav decoders, Opus/Vorbis, GL 
   ported to FFmpeg 5.1, appears in GStreamer as `avdec_h264_cedar`, ranked above `avdec_h264`
   (`launch.sh`). It runs libcedarc (bundled from `runtime/mpv/lib`, `libawh264.so` included) and copies
   each NV21 picture into an ordinary frame. Without the `AV_CODEC_CAP_HARDWARE` flag, which makes
-  gst-libav skip a decoder. When the hardware can't be used (no `/dev/cedar_dev`, failed init,
+  gst-libav skip a decoder, and with `AV_CODEC_CAP_DR1`: gst-libav then hands out its own buffers, so
+  a picture is copied once (as in mpv), not into a frame and again into a buffer (91% of 1080p60
+  frames were dropped that way). Its reorder delay is reported (`has_b_frames`), and WebKit turns its
+  QoS off (patch 0013). When the hardware can't be used (no `/dev/cedar_dev`, failed init,
   High 10/4:2:2/4:4:4) it runs FFmpeg's software `h264` decoder inside itself, as GStreamer can't
   switch decoders once playback started. gst-libav matches frames by `reordered_opaque` and drops
   frames whose buffer wasn't requested in decoding order ("ghost frames"; with B-frames that froze
@@ -759,7 +763,8 @@ All in `patches/`, applied by `scripts/build-webkit.sh` to the 2.54.0 release ta
 | `0009-angle-gcc12-resourcemap-static-assert` | ANGLE doesn't compile with GCC 12, which evaluates a `static_assert` inside a discarded `if constexpr` branch (`ResourceMap.h`): made it a runtime `ASSERT`. |
 | `0010-angle-gles-proc-dlsym-fallback` | ANGLE's GL backend looks functions up with `eglGetProcAddress`, then in `libEGL`. PowerVR returns NULL for core GLES functions and exports them only from `libGLESv2`: look there as well (same issue as patch 0006). |
 | `0011-gcc12-coroutine-awaitable-temporaries` | GCC 12.2 miscompiles temporaries in `co_await` expressions: an awaitable's captured `Ref` is released once too often. Entering fullscreen (YouTube's player) deleted the page while `WebFullScreenManagerProxy::enterFullScreen` still used it and the browser aborted (`crashDueToCheckedPtrToDeadObject`). Every awaitable in the fullscreen code and the page's coordinate helpers is kept in a named local instead. |
-| `0012-yuv-video-frames-uploaded-to-gpu` | Without GStreamer GL, WebKit's video sink only took BGRx/BGRA, so a `videoconvert` turned every software-decoded frame into RGB on the CPU (~0.5 core at 720p30) and frames were shown unevenly (22 of 30 fps). The sink now prefers I420/YV12/NV12/NV21; the compositor uploads the planes into R8/RG8 textures and converts with its YUV shader: 30 of 30 fps, ~52% CPU instead of ~75% (720p30 VP9, 8 Mbit/s). |
+| `0012-yuv-video-frames-uploaded-to-gpu` | Without GStreamer GL, WebKit's video sink only took BGRx/BGRA, so a `videoconvert` turned every software-decoded frame into RGB on the CPU (~0.5 core at 720p30) and frames were shown unevenly (22 of 30 fps). The sink now prefers I420/YV12/NV12/NV21; the compositor uploads the planes into R8/RG8 textures and converts with its YUV shader (the plane textures reused frame to frame): 30 of 30 fps, ~52% CPU instead of ~75% (720p30 VP9, 8 Mbit/s). |
+| `0013-decoder-settings-for-a133` | `avdec_h264_cedar` (hardware H.264): QoS off. It only just keeps up with 1080p60; after a slightly late frame QoS made it drop the following ones to catch up, which saves nothing for a hardware decoder, so it never caught up (67% dropped; mpv drops ~10%). Other `avdec_*`: one thread per core instead of WebKit's 2. |
 
 ## Repository layout
 

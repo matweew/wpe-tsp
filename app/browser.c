@@ -747,18 +747,6 @@ static gboolean input_is_url(const char *input)
     return strstr(input, "://") || g_str_has_prefix(input, "about:") || (!strchr(input, ' ') && strchr(input, '.'));
 }
 
-/* Paste key: text copied in pages (WebKit's copy goes to the display's clipboard, in memory) */
-static char *osk_paste_text(void *user_data)
-{
-    (void)user_data;
-    WPEClipboard *clipboard = wpe_display_get_clipboard(wpe_view_get_display(app.wpe_view));
-    gsize size = 0;
-    char *data = wpe_clipboard_read_text(clipboard, "text/plain", &size);
-    char *text = data ? g_strndup(data, size) : NULL; /* the bytes as stored: not NUL-terminated */
-    g_free(data);
-    return text;
-}
-
 static bool osk_is_search(const char *line, void *user_data)
 {
     (void)user_data;
@@ -2484,7 +2472,6 @@ int main(int argc, char **argv)
         .enter = osk_enter,
         .closed = osk_closed,
         .is_search = osk_is_search,
-        .paste_text = osk_paste_text,
     };
     if (!osk_init(app.renderer, app.phys_w, app.phys_h, font_path, &osk_callbacks, app.ui_scale))
         fprintf(stderr, "[wpe-tsp] on-screen keyboard unavailable\n");

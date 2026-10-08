@@ -41,6 +41,7 @@ void log_set_level(unsigned level);
 
 #define MAX_DECODE_STEPS 64 /* DecodeVideoStream() calls per receive_frame() */
 #define MAX_PENDING 12      /* packets in flight in the decoder (each holds a reserved frame) */
+#define CEDAR_DELAY_FRAMES 6 /* reported latency (see cedar_init_hw) */
 #define MAX_RESERVED 24     /* reserved frames (software fallback: its delay + frame threads) */
 
 /* Timestamps are not given to the decoder: with them it drops frames it considers late and
@@ -180,6 +181,10 @@ static int cedar_init_hw(AVCodecContext *avctx)
         return AVERROR_EXTERNAL;
     }
     avctx->pix_fmt = AV_PIX_FMT_NV21;
+    /* Pictures come out a few packets after they go in (reordering, the stream buffer): report
+     * it, as GStreamer's latency (gst-libav: has_b_frames frames). Unreported, every frame
+     * reached the sink late and GStreamer's QoS dropped most of them at 1080p60. */
+    avctx->has_b_frames = CEDAR_DELAY_FRAMES;
     return 0;
 }
 
@@ -579,7 +584,9 @@ const FFCodec ff_h264_cedar_decoder = {
     .flush          = cedar_flush,
     .p.priv_class   = &cedar_h264_dec_class,
     /* no AV_CODEC_CAP_HARDWARE: gst-libav skips those, and frames are ordinary memory anyway */
-    .p.capabilities = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING,
+    /* DR1: gst-libav then allocates the frames from its own buffer pool, so each picture is copied
+     * once, straight into the GStreamer buffer (without it: into a frame, then again into a buffer) */
+    .p.capabilities = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_DR1,
     .bsfs           = "h264_mp4toannexb",
     .p.wrapper_name = "cedar",
     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
