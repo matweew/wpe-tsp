@@ -10,7 +10,7 @@ cd "$progdir"
 [ -f "$progdir/settings.conf" ] && . "$progdir/settings.conf"
 for key in HOME_URL SEARCH_URL SCALE PAGE_MEMORY_LIMIT_MB POINTER_HIDE_SECONDS HISTORY_SIZE \
            DOWNLOAD_DIR PLAY_YOUTUBE_IN_MPV USER_AGENT AD_BLOCK WEBGL START_PAGE \
-           KEYBOARD_LAYOUTS; do
+           KEYBOARD_LAYOUTS HW_VIDEO_DECODE; do
     eval "value=\${$key-} env=\${WPE_TSP_$key-}"
     [ -z "$env" ] && [ -n "$value" ] && export "WPE_TSP_$key=$value"
 done
@@ -63,8 +63,22 @@ mkdir -p "$XDG_DATA_HOME" "$XDG_CACHE_HOME"
 export GST_PLUGIN_SYSTEM_PATH="$progdir/lib/gstreamer-1.0"
 export GST_PLUGIN_PATH=
 export GST_REGISTRY_FORK=no
-export GST_REGISTRY="$XDG_CACHE_HOME/gstreamer-registry.bin"
-export GST_PLUGIN_FEATURE_RANK="avdec_av1:NONE,${GST_PLUGIN_FEATURE_RANK:-}"
+# The registry is only rescanned when a plugin file changes, not when the FFmpeg gst-libav loads does
+# (it lists FFmpeg's decoders, e.g. the Cedar one): one registry per libavcodec build
+avcodec_id=$(stat -c %Y-%s "$progdir/lib/libavcodec.so.59" 2>/dev/null)
+export GST_REGISTRY="$XDG_CACHE_HOME/gstreamer-registry-$avcodec_id.bin"
+for old in "$XDG_CACHE_HOME"/gstreamer-registry*.bin; do
+    [ "$old" != "$GST_REGISTRY" ] && rm -f "$old"
+done
+# H.264 on the Allwinner Cedar hardware decoder (FFmpeg's h264_cedar, which falls back to software
+# by itself when the hardware can't be used): ranked above the software avdec_h264. HW_VIDEO_DECODE=0
+# hides it.
+if [ "${WPE_TSP_HW_VIDEO_DECODE:-1}" = 0 ]; then
+    cedar_rank=avdec_h264_cedar:NONE
+else
+    cedar_rank=avdec_h264_cedar:257 # PRIMARY (256) + 1
+fi
+export GST_PLUGIN_FEATURE_RANK="avdec_av1:NONE,$cedar_rank,${GST_PLUGIN_FEATURE_RANK:-}"
 # GStreamer's GL (video frames to the GPU) asks EGL for desktop OpenGL first; the PowerVR driver
 # only has GLES ("Failed to bind OpenGL API: EGL_BAD_PARAMETER" and no picture).
 export GST_GL_API=gles2

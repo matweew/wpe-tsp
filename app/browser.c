@@ -1191,6 +1191,40 @@ static void on_embed_play(WebKitUserContentManager *manager, JSCValue *value, gp
     g_free(uri);
 }
 
+/* YouTube in the page with the Cedar hardware H.264 decoder: YouTube picks VP9 (software only here,
+ * ~1.5 cores) when the browser says it can play it. Say VP9/AV1 aren't supported, on YouTube only,
+ * so it serves H.264 (what h264ify does). */
+static const char YOUTUBE_H264_JS[] =
+    "(() => {"
+    "const no = /vp0?9|av01|av1/i;"
+    "for (const MS of [window.MediaSource, window.ManagedMediaSource]) {"
+    "  if (!MS || !MS.isTypeSupported) continue;"
+    "  const orig = MS.isTypeSupported.bind(MS);"
+    "  MS.isTypeSupported = type => !no.test(type) && orig(type);"
+    "}"
+    "const canPlay = HTMLMediaElement.prototype.canPlayType;"
+    "HTMLMediaElement.prototype.canPlayType = function (type) { return no.test(type) ? '' : canPlay.call(this, type); };"
+    "const mc = navigator.mediaCapabilities;"
+    "if (mc && mc.decodingInfo) {"
+    "  const orig = mc.decodingInfo.bind(mc);"
+    "  mc.decodingInfo = config => config && config.video && no.test(config.video.contentType || '')"
+    "    ? Promise.resolve({ supported: false, smooth: false, powerEfficient: false }) : orig(config);"
+    "}"
+    "})()";
+
+static void setup_youtube_h264(WebKitWebView *web_view)
+{
+    WebKitUserContentManager *ucm = webkit_web_view_get_user_content_manager(web_view);
+    static const char *const youtube[] = {
+        "*://www.youtube.com/*", "*://m.youtube.com/*", "*://youtube.com/*",
+        "*://www.youtube-nocookie.com/*", "*://youtube-nocookie.com/*", NULL
+    };
+    WebKitUserScript *script = webkit_user_script_new(YOUTUBE_H264_JS, WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES,
+                                                      WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, youtube, NULL);
+    webkit_user_content_manager_add_script(ucm, script);
+    webkit_user_script_unref(script);
+}
+
 static void setup_embed_play(WebKitWebView *web_view)
 {
     WebKitUserContentManager *ucm = webkit_web_view_get_user_content_manager(web_view);
@@ -2546,6 +2580,8 @@ int main(int argc, char **argv)
     g_signal_connect(app.web_view, "notify::uri", G_CALLBACK(on_uri_changed), NULL);
     if (app.play_youtube)
         setup_embed_play(app.web_view);
+    else if (g_strcmp0(g_getenv("WPE_TSP_HW_VIDEO_DECODE"), "0")) /* default on, see launch.sh */
+        setup_youtube_h264(app.web_view);
     /* AD_BLOCK=1 (default): share/adblock/rules.json; WPE_TSP_ADBLOCK_RULES overrides the file */
     const char *adblock_env = g_getenv("WPE_TSP_AD_BLOCK");
     if (!adblock_env || strcmp(adblock_env, "0")) {

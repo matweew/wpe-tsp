@@ -22,7 +22,8 @@ you drive it with the gamepad, a USB keyboard and mouse, or the on-screen keyboa
 - 🧠 **Made for 1 GB of RAM**: one page process, memory limits and a low-memory watchdog keep the device
   responsive; the mobile site versions it asks for are much lighter.
 - 📺 **Video and audio in pages**: `<video>`/`<audio>`, YouTube included, play right in the page
-  (GStreamer: H.264, VP9, AAC, Opus, MP3…, decoded in software).
+  (GStreamer: H.264 on the Allwinner hardware decoder, 720p at ~13% CPU; VP9, AAC, Opus, MP3… in
+  software; frames converted to RGB on the GPU).
 - 🚀 **Or YouTube in hardware-accelerated mpv** (`PLAY_YOUTUBE_IN_MPV=1`): video pages play in the
   bundled mpv with the Allwinner H.264 hardware decoder (720p at ~14% CPU). The page stays open for
   comments and likes, with a **▶ Play in mpv** button to watch again. Embedded YouTube players play the
@@ -147,6 +148,7 @@ Edit `Apps/WPE/settings.conf` on the SD card; changes apply at the next start.
 | `SCALE` | per device | Page zoom: 1.5 = text 1.5× larger. Empty = the same text size on every model: Smart Pro 1.5, Brick 2.0, Brick Pro 1.65 |
 | `USER_AGENT` | `mobile` | `mobile` (iPhone Safari, lighter sites), `desktop`, or a full user-agent string |
 | `AD_BLOCK` | `1` | Ad and tracker blocking; `0` = off |
+| `HW_VIDEO_DECODE` | `1` | H.264 in pages on the hardware decoder (falls back to software by itself); YouTube in the page is asked for H.264. `0` = software only |
 | `PLAY_YOUTUBE_IN_MPV` | `0` | YouTube only: `1` = in mpv (hardware H.264, smooth 720p); `0` = in the page (software). Other videos always play in the page |
 | `DOWNLOAD_DIR` | `/mnt/SDCARD/Downloads` | Where downloads go |
 | `HISTORY_SIZE` | `20` | Pages kept in History (`0` = none, max 60) |
@@ -174,8 +176,9 @@ Keep a Latin layout such as `us` in the list for typing addresses.
 
 ## ⚠️ Known limitations
 
-- Video inside pages is decoded in software (~46% CPU). For the lightest playback, set
-  `PLAY_YOUTUBE_IN_MPV=1` (mpv, hardware H.264 decoding).
+- In pages, only H.264 is decoded in hardware; VP9 and other codecs use the CPU (720p30 VP9 at
+  8 Mbit/s: ~52% CPU). 1080p60 H.264 drops frames even in hardware (copying 1080p frames out of the
+  decoder and to the GPU); 720p plays smoothly.
 - No video calls (WebRTC) and no DRM-protected video (Netflix, Spotify…).
 - The desktop YouTube site needs more memory than the device has; the default mobile one works.
 - One page at a time, no tabs.
@@ -351,7 +354,8 @@ needs hard links, which exFAT lacks, so it lives on the internal ext4 partition)
 | SDL2 headers | TrimUI's [toolchain_sdk_smartpro](https://github.com/trimui/toolchain_sdk_smartpro) release `SDL2-2.26.1.GE8300.tgz` (Dockerfile) |
 | SDL2 / SDL2_ttf libraries to link against | copied from the device by `scripts/fetch-device-sdl.sh` |
 | Build-container packages | Debian bookworm (amd64 + arm64 multiarch), see `Dockerfile`; GStreamer 1.22 and its plugins (in-page video) are bundled from there |
-| FFmpeg 5.1.9 (in-page video) | [ffmpeg-5.1.9.tar.xz](https://ffmpeg.org/releases/ffmpeg-5.1.9.tar.xz), built by `scripts/build-ffmpeg.sh` with decoders only (LGPL), replacing Debian's for gst-libav |
+| FFmpeg 5.1.9 (in-page video) | [ffmpeg-5.1.9.tar.xz](https://ffmpeg.org/releases/ffmpeg-5.1.9.tar.xz), built by `scripts/build-ffmpeg.sh` with decoders only (LGPL), replacing Debian's for gst-libav; plus `ffmpeg-cedar/cedardec.c` |
+| libcedarc headers | [CalvinXu17/libcedarc](https://github.com/CalvinXu17/libcedarc) at `e68d4a7` (the commit mpv-tsp's libraries are built from), downloaded by `scripts/build-ffmpeg.sh`; the libraries themselves come from `runtime/mpv/lib` |
 | EasyList, EasyPrivacy | [easylist.to](https://easylist.to/), downloaded by `scripts/package.sh` |
 | XKB layouts | Debian's `xkb-data` ([xkeyboard-config](https://gitlab.freedesktop.org/xkeyboard-config/xkeyboard-config)), compiled with `xkbcli` from `libxkbcommon-tools` |
 | `runtime/yt-dlp` *(not in git)* | `yt-dlp_linux_aarch64` from [yt-dlp releases](https://github.com/yt-dlp/yt-dlp/releases/latest). Only the initial copy: the browser updates `bin/yt-dlp` on the device itself |
@@ -632,6 +636,19 @@ demuxers for MP4/WebM/Ogg/MP3/WAV, parsers, gst-libav decoders, Opus/Vorbis, GL 
   x265, aom, rav1e, codec2, flite, librsvg…: 150+ MB); the same release keeps sonames and symbol
   versions, so Debian's plugin loads it unchanged. FFmpeg's AV1 decoder is hidden
   (`GST_PLUGIN_FEATURE_RANK=avdec_av1:NONE`), so sites pick H.264 or VP9.
+- **Hardware H.264** (`HW_VIDEO_DECODE=1`): `ffmpeg-cedar/cedardec.c`, mpv-tsp's `h264_cedar` decoder
+  ported to FFmpeg 5.1, appears in GStreamer as `avdec_h264_cedar`, ranked above `avdec_h264`
+  (`launch.sh`). It runs libcedarc (bundled from `runtime/mpv/lib`, `libawh264.so` included) and copies
+  each NV21 picture into an ordinary frame. Without the `AV_CODEC_CAP_HARDWARE` flag, which makes
+  gst-libav skip a decoder. When the hardware can't be used (no `/dev/cedar_dev`, failed init,
+  High 10/4:2:2/4:4:4) it runs FFmpeg's software `h264` decoder inside itself, as GStreamer can't
+  switch decoders once playback started. gst-libav matches frames by `reordered_opaque` and drops
+  frames whose buffer wasn't requested in decoding order ("ghost frames"; with B-frames that froze
+  the picture after the first frame), so a buffer is reserved per packet as it goes into the decoder
+  and the picture copied into it when it comes out. The GStreamer registry is named after
+  `libavcodec`'s mtime and size: it's only rescanned when a plugin file changes, not the FFmpeg it
+  loads. On YouTube a user script reports VP9/AV1 as unsupported (`MediaSource.isTypeSupported`,
+  `mediaCapabilities`, `canPlayType`), so it serves H.264.
 - **GL:** frames go to the GPU through GStreamer GL, which has to be told to use GLES via EGL
   (`GST_GL_API=gles2`, `GST_GL_PLATFORM=egl` in `launch.sh`): it tries desktop OpenGL first, which the
   PowerVR driver lacks (no picture). Its X11 backend links `libGL.so.1`: a stub with just those GLX
@@ -647,9 +664,10 @@ demuxers for MP4/WebM/Ogg/MP3/WAV, parsers, gst-libav decoders, Opus/Vorbis, GL 
   software volume) applies.
 - **Registry:** only the bundled plugins (`GST_PLUGIN_SYSTEM_PATH`), scanned in-process
   (`GST_REGISTRY_FORK=no`) and cached in `/mnt/UDISK/wpe-browser/cache/gstreamer-registry.bin`.
-- **Measured** (mobile YouTube, whole system, 4 cores, without the GL sink): ~46% CPU, 260–380 MB
-  available, 0–1 frames/s dropped after the start. The desktop site is closed by the low-memory
-  watchdog.
+- **Measured** (whole system, 4 cores): 720p25 H.264 file on Cedar ~13% CPU, 0 frames dropped
+  (software fallback ~31%); mobile YouTube (H.264 on Cedar) ~38% CPU with the page, drops only in
+  the first seconds; 720p30 VP9 8 Mbit/s in software ~52%, 30 of 30 frames/s shown. The desktop
+  YouTube site is closed by the low-memory watchdog.
 - With `PLAY_YOUTUBE_IN_MPV=1` the page's own player is kept paused under the **▶ Play in mpv** buttons
   (a capture-phase `play` listener), so it doesn't play along with mpv.
 - YouTube's *Stats for nerds* (gear menu → bottom) shows the codec, resolution and dropped frames.

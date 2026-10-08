@@ -54,6 +54,10 @@ for plugin in $GST_PLUGINS; do
     cp "$MULTIARCH/gstreamer-1.0/libgst$plugin.so" "$OUT/lib/gstreamer-1.0/"
 done
 
+# libcedarc's H.264 plugin: loaded by name from next to libvideoengine.so (the closure below
+# bundles the libraries FFmpeg's h264_cedar decoder links)
+cp /work/runtime/mpv/lib/libawh264.so "$OUT/lib/"
+
 # GStreamer's GL library links libGL.so.1 for X11 only: a stub with the GLX entry points it names
 aarch64-linux-gnu-gcc-12 -O2 -shared -fPIC -Wl,-soname,libGL.so.1 -o "$OUT/lib/libGL.so.1" /work/scripts/libgl-stub.c
 
