@@ -11,11 +11,8 @@
 
 /* Called (throttled) whenever progress or the status text changes. */
 typedef void (*DownloadsChanged)(void *user_data);
-/* "Play" chosen on the downloads page for a saved video/audio file. */
-typedef void (*DownloadsPlay)(const char *path, void *user_data);
-
 void downloads_init(WebKitNetworkSession *session, const char *dir, DownloadsChanged changed,
-                    DownloadsPlay play, void *user_data);
+                    void *user_data);
 const char *downloads_dir(void);
 
 /* Start downloading a URL right away (user explicitly chose it). */
@@ -34,6 +31,8 @@ char *downloads_status(double *progress);
 
 /* wpe-tsp://downloads[/cancel/<id>|/play-file/<name>|/clear]: performs the action, returns the page HTML. */
 char *downloads_handle_page(const char *uri);
+/* DOWNLOADS_URI/open/<name> (a saved file): its file:// URI for the browser to load, else NULL */
+char *downloads_open_file_uri(const char *uri);
 
 /* Free space in the download directory, in bytes (-1 if unknown). */
 gint64 downloads_free_space(void);

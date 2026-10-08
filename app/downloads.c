@@ -5,6 +5,7 @@
 #include "downloads.h"
 
 #include "pages.h"
+#include <errno.h>
 #include <gio/gio.h>
 #include <glib/gstdio.h>
 #include <stdio.h>
@@ -34,8 +35,7 @@ typedef struct {
 static struct {
     char *dir;
     DownloadsChanged changed;
-    DownloadsPlay play;
-    void *user_data;
+        void *user_data;
     GPtrArray *items;           /* Item*, oldest first */
     guint next_id;
     gint64 last_changed;
@@ -329,9 +329,8 @@ static void remove_interrupted_downloads(void)
 }
 
 void downloads_init(WebKitNetworkSession *session, const char *dir, DownloadsChanged changed,
-                    DownloadsPlay play, void *user_data)
+                    void *user_data)
 {
-    dl.play = play;
     dl.dir = g_strdup(dir);
     g_mkdir_with_parents(dl.dir, 0755); /* also makes the free-space check work from the start */
     remove_interrupted_downloads();
@@ -428,6 +427,36 @@ static gboolean is_media(const char *name, const char *mime)
         media = g_str_has_suffix(lower, extensions[i]);
     g_free(lower);
     return media;
+}
+
+/* Shown by the browser itself (file:// page): pages, images, text, PDF (WebKit's PDF.js) */
+static gboolean is_viewable(const char *name)
+{
+    static const char *const extensions[] = {
+        ".html", ".htm", ".xhtml", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico",
+        ".txt", ".pdf", ".json", ".xml", NULL
+    };
+    char *lower = g_ascii_strdown(name, -1);
+    gboolean viewable = FALSE;
+    for (int i = 0; extensions[i] && !viewable; i++)
+        viewable = g_str_has_suffix(lower, extensions[i]);
+    g_free(lower);
+    return viewable;
+}
+
+/* A saved file's name from a page action: a plain name inside the download directory, nothing
+ * else. Newly allocated path, or NULL. */
+static char *saved_file_path(const char *escaped)
+{
+    char *name = g_uri_unescape_string(escaped, NULL);
+    char *path = NULL;
+    if (name && *name && !strchr(name, '/') && strcmp(name, "..") && strcmp(name, ".")) {
+        path = g_build_filename(dl.dir, name, NULL);
+        if (!g_file_test(path, G_FILE_TEST_IS_REGULAR))
+            g_clear_pointer(&path, g_free);
+    }
+    g_free(name);
+    return path;
 }
 
 typedef struct {
@@ -557,14 +586,25 @@ static char *downloads_page_html(void)
         char *date = when ? g_date_time_format(when, "%d.%m.%Y %H:%M") : g_strdup("");
         if (when)
             g_date_time_unref(when);
-        if (dl.play && is_media(f->name, NULL)) {
-            char *escaped = g_uri_escape_string(f->name, NULL, FALSE);
-            g_string_append_printf(html, "<a href='" DOWNLOADS_URI "/play-file/%s'><div class='t'>%s</div>"
-                                   "<div class='s'>%s \xc2\xb7 %s \xc2\xb7 A: play</div></a>", escaped, name, size, date);
-            g_free(escaped);
-        } else
-            g_string_append_printf(html, "<div class='item'><div class='t'>%s</div><div class='s'>%s \xc2\xb7 %s</div></div>",
-                                   name, size, date);
+        /* Video/audio (played in the page), pages, images, text and PDF open in the browser;
+         * everything else is only listed */
+        char *escaped = g_uri_escape_string(f->name, NULL, FALSE);
+        char *path = g_build_filename(dl.dir, f->name, NULL);
+        char *file_uri = g_filename_to_uri(path, NULL, NULL);
+        gboolean media = is_media(f->name, NULL);
+        g_string_append(html, "<div class='row'>");
+        if ((media || is_viewable(f->name)) && file_uri) /* the browser loads it: downloads_open_file_uri() */
+            g_string_append_printf(html, "<a class='main' href='" DOWNLOADS_URI "/open/%s'>", escaped);
+        else
+            g_string_append(html, "<div class='item main'>");
+        gboolean link = (media || is_viewable(f->name)) && file_uri;
+        g_string_append_printf(html, "<div class='t'>%s</div><div class='s'>%s \xc2\xb7 %s%s</div>%s",
+                               name, size, date, !link ? "" : media ? " \xc2\xb7 A: play" : " \xc2\xb7 A: open",
+                               link ? "</a>" : "</div>");
+        g_string_append_printf(html, "<a class='side' href='" DOWNLOADS_URI "/delete/%s'>Delete</a></div>", escaped);
+        g_free(file_uri);
+        g_free(path);
+        g_free(escaped);
         g_free(date);
         g_free(size);
         g_free(name);
@@ -579,6 +619,17 @@ static char *downloads_page_html(void)
     return g_string_free(html, FALSE);
 }
 
+char *downloads_open_file_uri(const char *uri)
+{
+    const char *prefix = DOWNLOADS_URI "/open/";
+    if (!g_str_has_prefix(uri, prefix))
+        return NULL;
+    char *path = saved_file_path(uri + strlen(prefix));
+    char *file_uri = path ? g_filename_to_uri(path, NULL, NULL) : NULL;
+    g_free(path);
+    return file_uri;
+}
+
 char *downloads_handle_page(const char *uri)
 {
     const char *action = uri + strlen(DOWNLOADS_URI);
@@ -590,16 +641,31 @@ char *downloads_handle_page(const char *uri)
             if (item->id == id && item->download)
                 webkit_download_cancel(item->download);
         }
-    } else if (g_str_has_prefix(action, "/play-file/")) {
-        /* a file name inside the download directory, nothing else */
-        char *name = g_uri_unescape_string(action + strlen("/play-file/"), NULL);
-        if (name && *name && !strchr(name, '/') && strcmp(name, "..") && dl.play) {
-            char *path = g_build_filename(dl.dir, name, NULL);
-            if (g_file_test(path, G_FILE_TEST_IS_REGULAR))
-                dl.play(path, dl.user_data);
+    } else if (g_str_has_prefix(action, "/delete/")) {
+        /* Ask first: a page of its own (Cancel first, so a stray START doesn't delete) */
+        const char *escaped = action + strlen("/delete/");
+        char *path = saved_file_path(escaped);
+        if (path) {
+            char *base = g_path_get_basename(path);
+            char *name = g_markup_escape_text(base, -1);
+            GString *html = g_string_new(NULL);
+            g_string_append_printf(html, PAGE_HEAD, "Delete file");
+            g_string_append_printf(html, "<h1>Delete this file?</h1><div class='item'><div class='t'>%s</div>"
+                                   "<div class='s'>from %s</div></div>"
+                                   "<a href='" DOWNLOADS_URI "'><div class='t'>Cancel</div></a>"
+                                   "<a class='clear' href='" DOWNLOADS_URI "/delete-confirmed/%s'><div class='t'>Delete</div>"
+                                   "<div class='s'>the file is removed from the SD card</div></a>", name, dl.dir, escaped);
+            g_string_append(html, PAGE_TAIL);
+            g_free(name);
+            g_free(base);
             g_free(path);
+            return g_string_free(html, FALSE);
         }
-        g_free(name);
+    } else if (g_str_has_prefix(action, "/delete-confirmed/")) {
+        char *path = saved_file_path(action + strlen("/delete-confirmed/"));
+        if (path && !is_being_downloaded(path) && g_unlink(path) != 0)
+            fprintf(stderr, "[wpe-tsp] downloads: can't delete %s: %s\n", path, g_strerror(errno));
+        g_free(path);
     } else if (!strcmp(action, "/clear")) {
         for (guint i = dl.items->len; i > 0; i--) {
             Item *item = g_ptr_array_index(dl.items, i - 1);

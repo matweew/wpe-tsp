@@ -983,6 +983,16 @@ static void on_app_scheme_request(WebKitURISchemeRequest *request, gpointer user
 {
     (void)user_data;
     const char *uri = webkit_uri_scheme_request_get_uri(request);
+    /* Opening a saved file: WebKit won't follow a link from this scheme to file://, so this
+     * request fails and on_load_failed() loads the file instead (nothing stays in the history) */
+    char *file_uri = downloads_open_file_uri(uri);
+    if (file_uri) {
+        g_free(file_uri);
+        GError *error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CANCELLED, "opening the file");
+        webkit_uri_scheme_request_finish_error(request, error);
+        g_error_free(error);
+        return;
+    }
     char *html;
     if (g_str_has_prefix(uri, DOWNLOADS_URI)) {
         html = downloads_handle_page(uri);
@@ -1169,65 +1179,6 @@ static const char WATCH_PLAY_JS[] =
     "  .observe(document.documentElement, { childList: true, subtree: true });"
     "})()";
 
-/* PLAY_YOUTUBE_IN_MPV=1: replace each <video>/<audio> with a box (poster/size kept) whose click
- * sends the source URL to mpv (hardware H.264, and lighter than playing in the page), which also
- * handles HLS (.m3u8) and DASH (.mpd). The hidden element is kept from loading or playing. blob:
- * sources (page-built MediaSource streams) only exist inside the page, so those play in the page. */
-static const char MEDIA_PLAY_JS[] =
-    "(() => {"
-    "if (!window.webkit || !window.webkit.messageHandlers.wpeTspPlayMedia) return;"
-    "const abs = u => { try { return new URL(u, document.baseURI).href; } catch (e) { return null; } };"
-    "const playable = u => { u = u && abs(u);"
-    "  return u && /^https?:/.test(u) ? u : null; };"
-    "const sourceOf = el => { let u = playable(el.getAttribute('src')); if (u) return u;"
-    "  for (const s of el.querySelectorAll('source')) {"
-    "    if ((u = playable(s.getAttribute('src')))) return u; }"
-    "  return null; };"
-    "const div = (css, parent) => { const e = document.createElement('div'); e.style.cssText = css;"
-    "  if (parent) parent.appendChild(e); return e; };"
-    "const seen = new WeakSet(), replaced = new WeakSet();"
-    "document.addEventListener('play', e => { if (replaced.has(e.target)) e.target.pause(); }, true);"
-    "const replace = el => {"
-    "  if (seen.has(el)) return; seen.add(el);"
-    "  const url = sourceOf(el); if (!url || !el.parentNode) return;"
-    "  const audio = el.tagName === 'AUDIO';"
-    "  const w = parseInt(el.getAttribute('width')) || 0, h = parseInt(el.getAttribute('height')) || 0;"
-    "  const box = div('display:flex;align-items:center;justify-content:center;gap:12px;cursor:pointer;"
-    "box-sizing:border-box;max-width:100%;margin:4px 0;border-radius:8px;color:#fff;font:600 16px sans-serif;"
-    "background:#202124 center/cover no-repeat;' + (audio ? 'height:56px;padding:0 16px;width:' + (w || 360) + 'px'"
-    "    : 'flex-direction:column;width:' + (w ? w + 'px' : '100%') + ';aspect-ratio:' + (w && h ? w + '/' + h : '16/9')));"
-    "  const poster = !audio && el.getAttribute('poster');"
-    "  if (poster && abs(poster)) box.style.backgroundImage = 'url(\"' + abs(poster) + '\")';"
-    "  const icon = div('width:' + (audio ? 40 : 72) + 'px;height:' + (audio ? 30 : 50) + 'px;border-radius:10px;"
-    "background:#f00;display:flex;align-items:center;justify-content:center;flex:none', box);"
-    "  div('width:0;height:0;border-left:' + (audio ? 14 : 22) + 'px solid #fff;border-top:' + (audio ? 9 : 14) + 'px solid transparent;"
-    "border-bottom:' + (audio ? 9 : 14) + 'px solid transparent;margin-left:5px', icon);"
-    "  const name = decodeURIComponent(url.split(/[?#]/)[0].split('/').pop() || url);"
-    "  div('text-shadow:0 1px 3px #000;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:90%', box)"
-    "    .textContent = (audio ? 'Play audio' : 'Play video') + ' \xc2\xb7 ' + name;"
-    "  box.addEventListener('click', e => { e.preventDefault(); e.stopPropagation();"
-    "    window.webkit.messageHandlers.wpeTspPlayMedia.postMessage(url); }, true);"
-    "  el.parentNode.insertBefore(box, el);"
-    "  el.style.display = 'none';"
-    "  replaced.add(el); el.autoplay = false; el.preload = 'none'; el.pause();"
-    "};"
-    "let queued = false;"
-    "const scan = () => { queued = false; document.querySelectorAll('video,audio').forEach(replace); };"
-    "scan();"
-    "new MutationObserver(() => { if (!queued) { queued = true; requestAnimationFrame(scan); } })"
-    "  .observe(document.documentElement, { childList: true, subtree: true });"
-    "})()";
-
-static void on_media_play(WebKitUserContentManager *manager, JSCValue *value, gpointer user_data)
-{
-    (void)manager; (void)user_data;
-    char *uri = jsc_value_to_string(value);
-    if (uri && (g_str_has_prefix(uri, "http://") || g_str_has_prefix(uri, "https://"))
-        && !player_busy() && player_available())
-        player_play_url(uri);
-    g_free(uri);
-}
-
 static void on_embed_play(WebKitUserContentManager *manager, JSCValue *value, gpointer user_data)
 {
     (void)manager; (void)user_data;
@@ -1258,12 +1209,6 @@ static void setup_embed_play(WebKitWebView *web_view)
     webkit_user_content_manager_register_script_message_handler(ucm, "wpeTspPlay", NULL);
     g_signal_connect(ucm, "script-message-received::wpeTspPlay", G_CALLBACK(on_embed_play), NULL);
 
-    script = webkit_user_script_new(MEDIA_PLAY_JS, WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES,
-                                    WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_END, NULL, NULL);
-    webkit_user_content_manager_add_script(ucm, script);
-    webkit_user_script_unref(script);
-    webkit_user_content_manager_register_script_message_handler(ucm, "wpeTspPlayMedia", NULL);
-    g_signal_connect(ucm, "script-message-received::wpeTspPlayMedia", G_CALLBACK(on_media_play), NULL);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -1357,20 +1302,6 @@ static void on_downloads_changed(void *user_data)
 {
     (void)user_data;
     app.needs_present = TRUE;
-}
-
-static gboolean play_file_idle(gpointer path)
-{
-    if (!player_busy() && player_available())
-        player_play_url(path);
-    return G_SOURCE_REMOVE;
-}
-
-/* Downloads page "Play": deferred, since it's requested from inside WebKit's scheme handler */
-static void on_downloads_play(const char *path, void *user_data)
-{
-    (void)user_data;
-    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, play_file_idle, g_strdup(path), g_free);
 }
 
 /* yt-dlp: version check after start (over the network at most once a day); a missing or
@@ -2238,7 +2169,13 @@ static void on_load_changed(WebKitWebView *web_view, WebKitLoadEvent load_event,
 
 static gboolean on_load_failed(WebKitWebView *web_view, WebKitLoadEvent load_event, char *uri, GError *error, gpointer user_data)
 {
-    (void)web_view; (void)load_event; (void)user_data;
+    (void)load_event; (void)user_data;
+    char *file_uri = downloads_open_file_uri(uri); /* the Downloads page opening a saved file */
+    if (file_uri) {
+        webkit_web_view_load_uri(web_view, file_uri);
+        g_free(file_uri);
+        return TRUE; /* no error page */
+    }
     fprintf(stderr, "[wpe-tsp] load failed: %s: %s\n", uri, error->message);
     return FALSE;
 }
@@ -2557,7 +2494,7 @@ int main(int argc, char **argv)
     g_free(cookie_path);
     const char *download_env = g_getenv("WPE_TSP_DOWNLOAD_DIR");
     downloads_init(webkit_network_session_get_default(), download_env && *download_env ? download_env : DEFAULT_DOWNLOAD_DIR,
-                   on_downloads_changed, on_downloads_play, NULL);
+                   on_downloads_changed, NULL);
 
     WebKitSettings *settings = webkit_settings_new_with_settings(
         "enable-developer-extras", FALSE,

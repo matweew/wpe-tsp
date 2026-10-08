@@ -25,8 +25,8 @@ you drive it with the gamepad, a USB keyboard and mouse, or the on-screen keyboa
   (GStreamer: H.264, VP9, AAC, Opus, MP3…, decoded in software).
 - 🚀 **Or YouTube in hardware-accelerated mpv** (`PLAY_YOUTUBE_IN_MPV=1`): video pages play in the
   bundled mpv with the Allwinner H.264 hardware decoder (720p at ~14% CPU). The page stays open for
-  comments and likes, with a **▶ Play in mpv** button to watch again. Embedded YouTube players and
-  `<video>`/`<audio>` on any site play the same way.
+  comments and likes, with a **▶ Play in mpv** button to watch again. Embedded YouTube players play the
+  same way.
 - 🔄 **yt-dlp updates itself**: the browser checks for new releases daily and installs them after a
   checksum check, so YouTube keeps working.
 - 🛡️ **Ad and tracker blocking**: EasyList + EasyPrivacy (~94,000 rules) built into WebKit, pages load
@@ -38,7 +38,8 @@ you drive it with the gamepad, a USB keyboard and mouse, or the on-screen keyboa
 - 🧊 **WebGL**: 3D in pages on the GPU; the WebGL Aquarium sample runs at 30 fps with 500 fish.
 - 📱 **Portrait mode**: turn the device sideways for long articles and feeds, like mpv does for portrait
   videos.
-- ⬇️ **Downloads**: save files, links and page media to the SD card, and play videos and audios from there.
+- ⬇️ **Downloads**: save files, links and page media to the SD card; open them from the Downloads page
+  (videos and audio play, pages, images and PDFs open in the browser) or delete them.
 - 🕘 **History, home page, search**: start on your home page, the last page or the address bar; anything
   that isn't a URL is searched.
 - 🍪 **Stays logged in**: cookies and site storage are kept across restarts.
@@ -146,7 +147,7 @@ Edit `Apps/WPE/settings.conf` on the SD card; changes apply at the next start.
 | `SCALE` | per device | Page zoom: 1.5 = text 1.5× larger. Empty = the same text size on every model: Smart Pro 1.5, Brick 2.0, Brick Pro 1.65 |
 | `USER_AGENT` | `mobile` | `mobile` (iPhone Safari, lighter sites), `desktop`, or a full user-agent string |
 | `AD_BLOCK` | `1` | Ad and tracker blocking; `0` = off |
-| `PLAY_YOUTUBE_IN_MPV` | `0` | `1` = play YouTube and page videos in mpv (hardware H.264, smooth 720p); `0` = in the page (software) |
+| `PLAY_YOUTUBE_IN_MPV` | `0` | YouTube only: `1` = in mpv (hardware H.264, smooth 720p); `0` = in the page (software). Other videos always play in the page |
 | `DOWNLOAD_DIR` | `/mnt/SDCARD/Downloads` | Where downloads go |
 | `HISTORY_SIZE` | `20` | Pages kept in History (`0` = none, max 60) |
 | `POINTER_HIDE_SECONDS` | `10` | Hide the idle pointer after this long (`0` = never) |
@@ -580,8 +581,12 @@ While a download runs, a status strip at the bottom shows the name, % and MB; a 
 notice follows for a few seconds. `wpe-tsp://downloads` (SELECT → Downloads → Show downloads) lists:
 - this session's active downloads (A cancels), plus failed and cancelled ones;
 - **all files in `DOWNLOAD_DIR`** (from any session), newest first, with size and date. Video and audio
-  files can be played (A: play);
-- the free space. *Clear list* only clears the session entries; files are never deleted from the page.
+  play in the page (A: play); pages, images, text and PDFs (WebKit's PDF.js viewer) open in the browser
+  (A: open). WebKit won't follow a link from the `wpe-tsp:` scheme to `file://`, so the item links to
+  `wpe-tsp://downloads/open/<name>`: that request fails on purpose and the browser loads the file from
+  its `load-failed` handler (nothing stays in the history; Back returns to the list);
+- a **Delete** button next to every saved file (d-pad right), with a confirmation page (Cancel first);
+- the free space. *Clear list* only clears the session entries.
 
 Existing files are never overwritten (`name (1).ext`), and partial files are removed when a download fails
 or is cancelled. WebKit writes to `<name>.wkdownload` (plus an empty `<name>` placeholder) until a
@@ -683,14 +688,9 @@ back to FFmpeg's software decoders automatically. Measured with mpv on screen (2
   a user script injected into those frames pauses their player and covers it with a **▶ Play in mpv**
   button that posts to the same handler. The buttons are built with DOM calls, because YouTube enforces
   Trusted Types, which reject `innerHTML` strings.
-- **`<video>`/`<audio>` elements** on any page are replaced with a box (keeping the element's size and
-  poster) labelled *Play video · file* or *Play audio · file*; the hidden element is kept from loading
-  and playing. A click sends the source URL (`src` or the first `<source>`) to mpv, including HLS
-  `.m3u8` and DASH `.mpd`. `blob:` sources (Media Source), which exist only inside the page's
-  JavaScript, play in the page.
-- **Video/audio files:** the download prompt offers **Play** / Download / Cancel, which plays the file's
-  URL directly in mpv. On `wpe-tsp://downloads`, saved video/audio files show **A: play** and play from
-  the SD card.
+- **Other video and audio** (any site's `<video>`/`<audio>`, links to media files, saved downloads)
+  plays in the page. Only files WebKit can't play (e.g. `.avi`) reach the download prompt, whose
+  **Play** / Download / Cancel plays the file's URL in mpv.
 - Recently finished live streams (`live_status=post_live`) exist only as DASH fragments until YouTube
   processes them: `yt-dlp -g` returns a single fragment (the last few seconds), and mpv can't join
   fragments without durations, so the browser says so instead of playing those seconds.
