@@ -1,0 +1,157 @@
+GCC 12.2 (Debian bookworm) miscompiles temporaries in co_await expressions: the awaitable's
+captured Ref/CheckedPtr gets released one time too many. Entering fullscreen (YouTube's player)
+then deleted the WebPageProxy while WebFullScreenManagerProxy::enterFullScreen still used it:
+abort() in CanMakeCheckedPtrBase::crashDueToCheckedPtrToDeadObject via detachFromClient.
+Keep every awaitable in a named local instead of awaiting a temporary.
+
+--- a/Source/WebKit/UIProcess/WebFullScreenManagerProxy.cpp
++++ b/Source/WebKit/UIProcess/WebFullScreenManagerProxy.cpp
+@@ -233,16 +233,18 @@
+     if (!webFrame)
+         co_return false;
+ 
+-    if (auto coordinates = co_await page->convertPointToMainFrameCoordinates({ 0, 0 }, webFrame->rootFrame()->frameID()))
++    auto awaitable1 = page->convertPointToMainFrameCoordinates({ 0, 0 }, webFrame->rootFrame()->frameID());
++    if (auto coordinates = co_await awaitable1)
+         m_rootFrameOriginInMainFrameCoordinates = IntPoint(*coordinates);
+ 
+     {
+         CheckedPtr client = m_client;
+         if (!client)
+             co_return false;
+-        bool success = co_await AwaitableFromCompletionHandler<bool> { [=] (auto completionHandler) {
++        AwaitableFromCompletionHandler<bool> awaitable2 { [=] (auto completionHandler) {
+             client->enterFullScreen(mediaDetails.mediaDimensions, WTF::move(completionHandler));
+         } };
++        bool success = co_await awaitable2;
+         ALWAYS_LOG(LOGIDENTIFIER);
+         if (!success)
+             co_return false;
+@@ -251,13 +253,15 @@
+     m_fullscreenState = FullscreenState::EnteringFullscreen;
+     page->fullscreenClient().willEnterFullscreen(page.get());
+ 
+-    auto needsPresentationUpdate = co_await AwaitableFromCompletionHandler<NeedsPresentationUpdate> { [this, protectedThis = Ref { *this }, frameID] (auto completionHandler) {
++    AwaitableFromCompletionHandler<NeedsPresentationUpdate> awaitable3 { [this, protectedThis = Ref { *this }, frameID] (auto completionHandler) {
+         enterFullScreenForOwnerElementsInOtherProcesses(frameID, WTF::move(completionHandler));
+     } };
++    auto needsPresentationUpdate = co_await awaitable3;
+ 
+     if (needsPresentationUpdate == NeedsPresentationUpdate::Yes) {
+         ASSERT(protect(page->preferences())->siteIsolationEnabled());
+-        co_await page->nextPresentationUpdate();
++        auto awaitable4 = page->nextPresentationUpdate();
++        co_await awaitable4;
+     }
+ 
+     co_return true;
+@@ -324,9 +328,10 @@
+         CheckedPtr client = m_client;
+         if (!client)
+             co_return;
+-        co_await AwaitableFromCompletionHandler<void> { [=] (auto completionHandler) {
++        AwaitableFromCompletionHandler<void> awaitable5 { [=] (auto completionHandler) {
+             client->exitFullScreen(WTF::move(completionHandler));
+         } };
++        co_await awaitable5;
+     }
+ 
+     m_fullscreenState = FullscreenState::ExitingFullscreen;
+@@ -420,22 +425,25 @@
+         co_return false;
+     auto [initialFrameInScreenCoordinates, finalFrameInScreenCoordinates] = *rectsInScreenCoordinates;
+ 
+-    co_await page->nextPresentationUpdate();
++    auto awaitable6 = page->nextPresentationUpdate();
++    co_await awaitable6;
+ 
+     {
+         CheckedPtr client = m_client;
+         if (!client)
+             co_return false;
+-        bool success = co_await AwaitableFromCompletionHandler<bool> { [=] (auto completionHandler) {
++        AwaitableFromCompletionHandler<bool> awaitable7 { [=] (auto completionHandler) {
+             client->beganEnterFullScreen(initialFrameInScreenCoordinates, finalFrameInScreenCoordinates, WTF::move(completionHandler));
+         } };
++        bool success = co_await awaitable7;
+         if (!success)
+             co_return false;
+     }
+ 
+-    co_return co_await AwaitableFromCompletionHandler<bool> { [this, protectedThis = Ref { *this }] (auto completionHandler) {
++    AwaitableFromCompletionHandler<bool> awaitable8 { [this, protectedThis = Ref { *this }] (auto completionHandler) {
+         didEnterFullScreen(WTF::move(completionHandler));
+     } };
++    co_return co_await awaitable8;
+ }
+ 
+ Awaitable<void> WebFullScreenManagerProxy::beganExitFullScreen(FrameIdentifier frameID, IntRect initialFrameInRootViewCoordinates, IntRect finalFrameInRootViewCoordinates)
+@@ -449,9 +457,10 @@
+         CheckedPtr client = m_client;
+         if (!client)
+             co_return;
+-        co_await AwaitableFromCompletionHandler<void> { [=] (auto completionHandler) {
++        AwaitableFromCompletionHandler<void> awaitable9 { [=] (auto completionHandler) {
+             client->beganExitFullScreen(initialFrameInScreenCoordinates, finalFrameInScreenCoordinates, WTF::move(completionHandler));
+         } };
++        co_await awaitable9;
+     }
+ 
+     m_fullscreenState = FullscreenState::NotInFullscreen;
+@@ -462,9 +471,10 @@
+     ALWAYS_LOG(LOGIDENTIFIER);
+     page->fullscreenClient().didExitFullscreen(page.get());
+ 
+-    co_await AwaitableFromCompletionHandler<void> { [this, protectedThis = Ref { *this }, frameID] (auto completionHandler) {
++    AwaitableFromCompletionHandler<void> awaitable10 { [this, protectedThis = Ref { *this }, frameID] (auto completionHandler) {
+         exitFullScreenInOtherProcesses(frameID, WTF::move(completionHandler));
+     } };
++    co_await awaitable10;
+ 
+     if (page->isControlledByAutomation()) {
+         if (RefPtr automationSession = page->configuration().processPool().automationSession())
+--- a/Source/WebKit/UIProcess/WebPageProxy.cpp
++++ b/Source/WebKit/UIProcess/WebPageProxy.cpp
+@@ -15646,16 +15646,18 @@
+ 
+ Awaitable<std::optional<WebCore::FloatPoint>> WebPageProxy::convertPointToMainFrameCoordinates(WebCore::FloatPoint point, std::optional<WebCore::FrameIdentifier> frameID)
+ {
+-    co_return co_await AwaitableFromCompletionHandler<std::optional<WebCore::FloatPoint>> { [protectedThis = Ref { *this }, point, frameID] (auto completionHandler) {
++    AwaitableFromCompletionHandler<std::optional<WebCore::FloatPoint>> awaitable { [protectedThis = Ref { *this }, point, frameID] (auto completionHandler) {
+         protectedThis->convertPointToMainFrameCoordinates(point, frameID, WTF::move(completionHandler));
+     } };
++    co_return co_await awaitable;
+ }
+ 
+ Awaitable<std::optional<WebCore::FloatRect>> WebPageProxy::convertRectToMainFrameCoordinates(WebCore::FloatRect rect, std::optional<WebCore::FrameIdentifier> frameID)
+ {
+-    co_return co_await AwaitableFromCompletionHandler<std::optional<WebCore::FloatRect>> { [protectedThis = Ref { *this }, rect, frameID] (auto completionHandler) {
++    AwaitableFromCompletionHandler<std::optional<WebCore::FloatRect>> awaitable { [protectedThis = Ref { *this }, rect, frameID] (auto completionHandler) {
+         protectedThis->convertRectToMainFrameCoordinates(rect, frameID, WTF::move(completionHandler));
+     } };
++    co_return co_await awaitable;
+ }
+ 
+ void WebPageProxy::hitTestAtPoint(WebCore::FrameIdentifier frameID, WebCore::FloatPoint point, CompletionHandler<void(std::optional<JSHandleInfo>&&)>&& completionHandler)
+@@ -16043,7 +16045,8 @@
+     if (!pageClient)
+         co_return;
+ 
+-    auto convertedBoundingBox = co_await convertRectToMainFrameCoordinates(boundingBoxOfReplacedString, rootFrameID);
++    auto awaitable11 = convertRectToMainFrameCoordinates(boundingBoxOfReplacedString, rootFrameID);
++    auto convertedBoundingBox = co_await awaitable11;
+     if (!convertedBoundingBox)
+         co_return;
+ 
+@@ -17012,9 +17015,10 @@
+ 
+ Awaitable<void> WebPageProxy::nextPresentationUpdate()
+ {
+-    co_return co_await AwaitableFromCompletionHandler<void> { [this, protectedThis = Ref { *this }] (auto completionHandler) {
++    AwaitableFromCompletionHandler<void> awaitable12 { [this, protectedThis = Ref { *this }] (auto completionHandler) {
+         callAfterNextPresentationUpdate(WTF::move(completionHandler));
+     } };
++    co_return co_await awaitable12;
+ }
+ 
+ #if !PLATFORM(GTK) && !PLATFORM(WPE)

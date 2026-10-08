@@ -712,6 +712,7 @@ All in `patches/`, applied by `scripts/build-webkit.sh` to the 2.54.0 release ta
 | `0008-ion-dmabuf-render-targets` | Zero-copy frames without GBM or dma-buf export: with `WEBKIT_DMABUF_ION=<heap mask>`, the UI process offers hardware buffers and the WebProcess's surfaceless swap chain allocates its render targets from ION (legacy ≤4.11 and current uAPI), imports them with `EGL_EXT_image_dma_buf_import` and sends them as DMA-buf buffers. Falls back to shared memory per buffer if allocation or import fails. |
 | `0009-angle-gcc12-resourcemap-static-assert` | ANGLE doesn't compile with GCC 12, which evaluates a `static_assert` inside a discarded `if constexpr` branch (`ResourceMap.h`): made it a runtime `ASSERT`. |
 | `0010-angle-gles-proc-dlsym-fallback` | ANGLE's GL backend looks functions up with `eglGetProcAddress`, then in `libEGL`. PowerVR returns NULL for core GLES functions and exports them only from `libGLESv2`: look there as well (same issue as patch 0006). |
+| `0011-gcc12-coroutine-awaitable-temporaries` | GCC 12.2 miscompiles temporaries in `co_await` expressions: an awaitable's captured `Ref` is released once too often. Entering fullscreen (YouTube's player) deleted the page while `WebFullScreenManagerProxy::enterFullScreen` still used it and the browser aborted (`crashDueToCheckedPtrToDeadObject`). Every awaitable in the fullscreen code and the page's coordinate helpers is kept in a named local instead. |
 
 ## Repository layout
 
