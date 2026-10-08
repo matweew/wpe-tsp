@@ -2510,7 +2510,9 @@ int main(int argc, char **argv)
                    on_downloads_changed, NULL);
 
     WebKitSettings *settings = webkit_settings_new_with_settings(
-        "enable-developer-extras", FALSE,
+        /* Web Inspector for debugging: WEBKIT_INSPECTOR_HTTP_SERVER=<device ip>:<port>, opened in a
+         * desktop browser (needs share/wpe-webkit-2.0/inspector.gresource from the build) */
+        "enable-developer-extras", g_getenv("WEBKIT_INSPECTOR_HTTP_SERVER") != NULL,
         "enable-smooth-scrolling", TRUE,
         /* Diagnostics: WPE_TSP_CONSOLE=1 prints the pages' console messages/errors to the log */
         "enable-write-console-messages-to-stdout", g_getenv("WPE_TSP_CONSOLE") != NULL,

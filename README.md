@@ -470,6 +470,11 @@ The app appears in TrimUI's **Apps** menu as **WPE Browser** (`config.json`, `ic
 Changes are tested on the real device, driven from the build host: start the browser with a test page,
 send it keyboard and mouse input, then check a screenshot and the log.
 
+- **Web Inspector:** copy `build/stage/mnt/SDCARD/Apps/WPE/share/wpe-webkit-2.0/inspector.gresource` to the
+  same path under `Apps/WPE` (not packaged), start with `scripts/run-on-device.sh
+  WEBKIT_INSPECTOR_HTTP_SERVER=<device ip>:9222 <url>` and open
+  `http://<device ip>:9222/Main.html?ws=<device ip>:9222/socket/1/1/WebPage` in a desktop browser
+  (console, timelines, `video.getVideoPlaybackQuality()`, `requestVideoFrameCallback`).
 - **Another model's layout on the Smart Pro:** `scripts/run-on-device.sh WPE_TSP_DEVICE=brick
   WPE_TSP_SCREEN=1024x768 WPE_TSP_SCALE=2.0 <url>` lays the browser out for the Brick's 1024×768,
   scaled to fit, with its UI scale and d-pad pointer controls (`brickpro` for the Brick Pro).
