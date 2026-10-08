@@ -130,6 +130,7 @@ typedef struct {
     guint32 pointer_hide_ms;
     gboolean swallow_a_release; /* A only revealed the hidden pointer: don't send the release */
     gboolean swallow_y_release; /* same for Y (right click) */
+    guint32 overlay_pressed;    /* gamepad buttons whose press a menu/the keyboard took: drop their release */
     guint swallow_mouse;        /* mouse buttons (bit n = button n) whose press only revealed the pointer */
     char *link_under_pointer;   /* from WebKit's hit test, for "Save link under pointer" */
     gboolean editable_under_pointer; /* from WebKit's hit test: a text field / editable area */
@@ -2062,7 +2063,19 @@ static gboolean input_tick(gpointer user_data)
     }
     while (SDL_PollEvent(&ev)) {
         rotate_input(&ev);
+        /* A press that chose a menu item (or closed the keyboard) must not have its release reach the
+         * page once the overlay is gone: a lone mouse-up over a link followed it (e.g. right click ->
+         * Download Linked File also opened the link) */
+        guint32 bit = ev.type == SDL_JOYBUTTONDOWN || ev.type == SDL_JOYBUTTONUP ? 1u << (ev.jbutton.button & 31) : 0;
+        if (ev.type == SDL_JOYBUTTONUP && (app.overlay_pressed & bit)) {
+            app.overlay_pressed &= ~bit;
+            if (!menu_handle_event(&ev)) /* still theirs if one is open (e.g. stops key repeat) */
+                osk_handle_event(&ev);
+            continue;
+        }
         if (menu_handle_event(&ev) || osk_handle_event(&ev)) {
+            if (ev.type == SDL_JOYBUTTONDOWN)
+                app.overlay_pressed |= bit;
             app.needs_present = TRUE;
             continue;
         }
