@@ -23,7 +23,6 @@ skip() {
         libEGL.so*|libGLESv2.so*|libGLESv1_CM.so*|libGLdispatch.so*|libGLX*|libOpenGL.so*) return 0 ;;
         libSDL2-2.0.so*|libSDL2_ttf-2.0.so*) return 0 ;;
         libasound.so*) return 0 ;;  # the device's alsa-lib matches its asound.conf and plugins
-        libGL.so.1) return 0 ;;     # a stub built by package.sh (scripts/libgl-stub.c)
         *) return 1 ;;
     esac
 }

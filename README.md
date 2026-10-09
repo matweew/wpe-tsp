@@ -419,7 +419,10 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/work wpe-tsp-builder scrip
 ```
 
 - `scripts/build-webkit.sh` holds the WebKit CMake options (see the `-D…` list). GStreamer is on
-  (video, audio, Web Audio, Media Source, GStreamer GL). Disabled: WebRTC, Web Codecs, EME, GBM/libdrm, the DRM and Wayland platforms, the legacy libwpe API,
+  (video, audio, Web Audio, Media Source) without GStreamer GL; `ENABLE_VIDEO_USES_ELEMENT_FULLSCREEN`
+  and `ENABLE_MEDIA_CONTROLS_CONTEXT_MENUS` are set explicitly: they depend on video, and a build
+  directory first configured without video keeps them OFF in its cache (the player's fullscreen and
+  settings buttons then did nothing). Disabled: WebRTC, Web Codecs, EME, GBM/libdrm, the DRM and Wayland platforms, the legacy libwpe API,
   the GPU process, bubblewrap sandbox, WebDriver, spellcheck, speech, gamepad API, ATK, AVIF/JPEG XL,
   hyphenation, introspection and docs. WebGL is built (ANGLE, +6 MB) and switched at runtime.
 - To rebuild WebKit after editing `src/`, run step 3 again (incremental). Patches are applied only once
@@ -653,17 +656,13 @@ demuxers for MP4/WebM/Ogg/MP3/WAV, parsers, gst-libav decoders, Opus/Vorbis, GL 
   `libavcodec`'s mtime and size: it's only rescanned when a plugin file changes, not the FFmpeg it
   loads. On YouTube a user script reports VP9/AV1 as unsupported (`MediaSource.isTypeSupported`,
   `mediaCapabilities`, `canPlayType`), so it serves H.264.
-- **GL:** frames go to the GPU through GStreamer GL, which has to be told to use GLES via EGL
-  (`GST_GL_API=gles2`, `GST_GL_PLATFORM=egl` in `launch.sh`): it tries desktop OpenGL first, which the
-  PowerVR driver lacks (no picture). Its X11 backend links `libGL.so.1`: a stub with just those GLX
-  entry points (`scripts/libgl-stub.c`) keeps glvnd's `gl*` stubs out of the process.
-- **YUV to the GPU** (patch 0012): decoded I420/NV12 frames go to the compositor as they are and are
-  converted to RGB by its shader, not by a CPU `videoconvert`.
-- **Video sink:** WebKit's GStreamer GL sink is off (`WEBKIT_GST_DISABLE_GL_SINK=1` in `launch.sh`). With
-  it, uploads and colour conversion ran on GStreamer's own GL thread and every frame reached the sink
-  ~55 ms late: the decoder dropped nearly all of them (QoS) and video was a slideshow with fine audio,
-  although the CPU decodes 720p VP9 at ~115 fps (4 threads). Without it WebKit uploads the I420 frames
-  itself: after the first seconds 0–1 frames/s are dropped, at ~46% CPU instead of ~70%.
+- **No GStreamer GL** (`-DUSE_GSTREAMER_GL=OFF`): its video sink did the GPU upload and colour
+  conversion on GStreamer's own GL thread, and on this GPU every frame reached the sink ~55 ms late:
+  the decoder dropped nearly all of them (QoS) and video was a slideshow with fine audio, although the
+  CPU decodes 720p VP9 at ~115 fps (4 threads). (It also needed GLES forced through `GST_GL_API` and a
+  `libGL.so.1` stub for its X11 backend.) WebKit's own sink is used: frames in system memory.
+- **YUV to the GPU** (patch 0012): decoded I420/NV12/NV21 frames go to the compositor as they are and
+  are converted to RGB by its shader, not by a CPU `videoconvert`.
 - **Audio:** `alsasink` with the device's own libasound (not bundled), so its `asound.conf` (dmix,
   software volume) applies.
 - **Registry:** only the bundled plugins (`GST_PLUGIN_SYSTEM_PATH`), scanned in-process

@@ -79,15 +79,6 @@ else
     cedar_rank=avdec_h264_cedar:257 # PRIMARY (256) + 1
 fi
 export GST_PLUGIN_FEATURE_RANK="avdec_av1:NONE,$cedar_rank,${GST_PLUGIN_FEATURE_RANK:-}"
-# GStreamer's GL (video frames to the GPU) asks EGL for desktop OpenGL first; the PowerVR driver
-# only has GLES ("Failed to bind OpenGL API: EGL_BAD_PARAMETER" and no picture).
-export GST_GL_API=gles2
-export GST_GL_PLATFORM=egl
-# WebKit's GStreamer GL video sink (upload + colour conversion on GStreamer's own GL thread) makes
-# every frame late on this GPU: the decoder drops nearly all of them (QoS) and video is a slideshow
-# while audio plays fine. Without it WebKit uploads the decoded frames itself: no drops after the
-# first seconds, at less CPU (measured, 480p VP9).
-export WEBKIT_GST_DISABLE_GL_SINK=${WEBKIT_GST_DISABLE_GL_SINK:-1}
 
 # Rendering tuning for the PowerVR GE8300: 4x MSAA is costly on this GPU, Skia's
 # analytic anti-aliasing looks the same for page content.

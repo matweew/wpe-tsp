@@ -41,12 +41,12 @@ cp "$MULTIARCH/gio/modules/libgiognutls.so" "$OUT/lib/gio/modules/"
 
 # --- GStreamer plugins for <video>/<audio> (Debian's; the libraries come with the closure below).
 # Only what playback needs: demuxers (MP4, WebM, Ogg, MP3, WAV), parsers, FFmpeg decoders
-# (gst-libav: H.264, VP9, AAC...), Opus/Vorbis, conversion, GL upload (WebKit's video sink),
+# (gst-libav: H.264, VP9, AAC...), Opus/Vorbis, conversion,
 # ALSA output (the device's libasound and asound.conf: dmix + its volume control). WebKit also
 # asks for scaletempo (audiofx: playback speed), videobalance (videofilter), deinterlace and the
 # WebVTT encoder (subenc: subtitles).
 GST_PLUGINS="coreelements typefindfunctions playback app gio audioconvert audioresample audiomixer
-    videoconvertscale volume opengl opus opusparse vorbis ogg alsa autodetect audioparsers isomp4
+    videoconvertscale volume opus opusparse vorbis ogg alsa autodetect audioparsers isomp4
     matroska id3demux mpg123 wavparse interleave libav videoparsersbad audiofx videofilter deinterlace
     subenc"
 mkdir -p "$OUT/lib/gstreamer-1.0"
@@ -57,9 +57,6 @@ done
 # libcedarc's H.264 plugin: loaded by name from next to libvideoengine.so (the closure below
 # bundles the libraries FFmpeg's h264_cedar decoder links)
 cp /work/runtime/mpv/lib/libawh264.so "$OUT/lib/"
-
-# GStreamer's GL library links libGL.so.1 for X11 only: a stub with the GLX entry points it names
-aarch64-linux-gnu-gcc-12 -O2 -shared -fPIC -Wl,-soname,libGL.so.1 -o "$OUT/lib/libGL.so.1" /work/scripts/libgl-stub.c
 
 # --- ad blocking: EasyList + EasyPrivacy domain rules -> WebKit content-blocker JSON.
 # The lists are cached in build/adblock; ADBLOCK_REFRESH=1 downloads fresh copies.
