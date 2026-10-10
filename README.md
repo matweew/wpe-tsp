@@ -183,8 +183,7 @@ Keep a Latin layout such as `us` in the list for typing addresses.
 - No video calls (WebRTC) and no DRM-protected video (Netflix, Spotify…).
 - The desktop YouTube site needs more memory than the device has; the default mobile one works.
 - One page at a time, no tabs.
-- Recently ended YouTube live streams can't be played until YouTube finishes processing them (usually
-  within hours).
+- Recently ended YouTube live streams can't be played in MPV until YouTube finishes processing them (usually within hours).
 - No WebGPU (WebGL 1/2 only).
 
 ## 🙏 Credits
