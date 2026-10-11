@@ -8,8 +8,10 @@
  *   4:4:4 profiles), FFmpeg's own h264 decoder runs inside this one instead, so playback works
  *   on any device: GStreamer has no fallback to another decoder once one is chosen;
  * - gst-libav matches output frames to its input through reordered_opaque (the input frame
- *   number), which each output frame must carry from its own packet. It also expects the frame
- *   buffer to be requested when decoding starts, in decoding order, as FFmpeg's decoders do: a
+ *   number), which each output frame must carry from its own packet. Its packets carry no
+ *   timestamps, so the packet of each picture (the decoder outputs them in display order) is
+ *   the pending one first in display order, by the picture order count from FFmpeg's H.264
+ *   parser. It also expects the frame buffer to be requested when decoding starts, in decoding order, as FFmpeg's decoders do: a
  *   frame still without one when a later one comes out is dropped as a "ghost frame" (with
  *   B-frames, a P-frame decoded early comes out late). So a buffer is reserved per packet as it
  *   goes into the decoder, and the picture is copied into it when it comes out.
@@ -22,6 +24,7 @@
  * version 2.1 of the License, or (at your option) any later version.
  */
 
+#include <limits.h>
 #include <string.h>
 
 #include <vdecoder.h>
@@ -30,6 +33,7 @@
 #include "libavutil/imgutils.h"
 #include "libavutil/opt.h"
 #include "libavutil/thread.h"
+#include "libavutil/time.h"
 #include "avcodec.h"
 #include "codec_internal.h"
 #include "decode.h"
@@ -39,16 +43,17 @@
 void log_set_level(unsigned level);
 #define CEDAR_LOG_LEVEL_ERROR 6
 
-#define MAX_DECODE_STEPS 64 /* DecodeVideoStream() calls per receive_frame() */
 #define MAX_PENDING 12      /* packets in flight in the decoder (each holds a reserved frame) */
 #define CEDAR_DELAY_FRAMES 6 /* reported latency (see cedar_init_hw) */
 #define MAX_RESERVED 24     /* reserved frames (software fallback: its delay + frame threads) */
 
 /* Timestamps are not given to the decoder: with them it drops frames it considers late and
  * treats negative ones (the pre-roll of an MP4 edit list) as missing. Pictures come out in
- * display order, so each one gets the smallest pending input timestamp, together with that
- * packet's discard flag (edit-list pre-roll) and reordered_opaque. */
+ * display order, so each one belongs to the pending packet first in display order (gst-libav
+ * gives no timestamps to sort by: the picture order count, see display_order()), and gets
+ * that packet's timestamp, discard flag (edit-list pre-roll) and reordered_opaque. */
 typedef struct CedarPktInfo {
+    int64_t order;          /* display order: coded video sequence, then picture order count */
     int64_t pts;
     int64_t reordered_opaque;
     int discard;
@@ -69,6 +74,10 @@ typedef struct CedarDecContext {
     CedarPktInfo pending[MAX_PENDING]; /* input timestamps not yet given to a picture */
     int nb_pending;
     int64_t nb_submitted, nb_pictures, nb_discarded, nb_no_pts;
+    AVCodecParserContext *parser; /* picture order counts of the packets */
+    AVCodecContext *parser_avctx;
+    int64_t sequence;       /* IDR pictures so far: the picture order count starts again */
+    int max_poc;            /* largest picture order count since the last IDR picture */
     /* software fallback: FFmpeg's h264 decoder, its frames copied into ours */
     AVCodecContext *sw;
     AVFrame *sw_frame;
@@ -107,6 +116,10 @@ static int profile_supported(AVCodecContext *avctx)
 
 static void cedar_close_hw(CedarDecContext *s)
 {
+    if (s->parser)
+        av_parser_close(s->parser);
+    s->parser = NULL;
+    avcodec_free_context(&s->parser_avctx);
     if (s->dec)
         DestroyVideoDecoder(s->dec);
     s->dec = NULL;
@@ -185,6 +198,19 @@ static int cedar_init_hw(AVCodecContext *avctx)
      * it, as GStreamer's latency (gst-libav: has_b_frames frames). Unreported, every frame
      * reached the sink late and GStreamer's QoS dropped most of them at 1080p60. */
     avctx->has_b_frames = CEDAR_DELAY_FRAMES;
+    /* Picture order counts (display_order()). Annex B packets with SPS/PPS in-band, as for
+     * cedar_init_sw(): no extradata. Without the parser, packets are taken in decoding order. */
+    s->parser = av_parser_init(AV_CODEC_ID_H264);
+    s->parser_avctx = avcodec_alloc_context3(NULL);
+    if (s->parser && s->parser_avctx) {
+        s->parser->flags |= PARSER_FLAG_COMPLETE_FRAMES;
+    } else {
+        if (s->parser)
+            av_parser_close(s->parser);
+        s->parser = NULL;
+        avcodec_free_context(&s->parser_avctx);
+    }
+    s->max_poc = INT_MIN;
     return 0;
 }
 
@@ -306,10 +332,35 @@ static int output_buffer(AVCodecContext *avctx, AVFrame *frame, int64_t reordere
     return get_buffer_for(avctx, frame, reordered_opaque);
 }
 
-/* Give the next picture the smallest pending input timestamp (see CedarPktInfo). */
+/* The packet's place in display order: its picture order count, after those of the coded
+ * video sequences before it (the count starts again at IDR pictures). Packets the parser can't
+ * place keep decoding order. */
+static int64_t display_order(CedarDecContext *s, const AVPacket *pkt)
+{
+    uint8_t *out;
+    int out_size, poc;
+
+    if (!s->parser)
+        return s->nb_submitted;
+    s->parser->output_picture_number = INT_MIN;
+    av_parser_parse2(s->parser, s->parser_avctx, &out, &out_size, pkt->data, pkt->size,
+                     AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+    poc = s->parser->output_picture_number;
+    if (poc == INT_MIN)
+        poc = s->max_poc == INT_MIN ? 0 : s->max_poc + 1;
+    if (s->parser->key_frame == 1 && s->max_poc != INT_MIN && poc < s->max_poc) {
+        s->sequence++;
+        s->max_poc = INT_MIN;
+    }
+    if (poc > s->max_poc)
+        s->max_poc = poc;
+    return s->sequence * ((int64_t)1 << 33) + poc;
+}
+
+/* The next picture's packet: the pending one first in display order (see CedarPktInfo) */
 static CedarPktInfo cedar_take_pts(CedarDecContext *s)
 {
-    CedarPktInfo info = { AV_NOPTS_VALUE, 0, 0 };
+    CedarPktInfo info = { 0, AV_NOPTS_VALUE, 0, 0 };
     int min = 0;
 
     s->nb_pictures++;
@@ -318,10 +369,10 @@ static CedarPktInfo cedar_take_pts(CedarDecContext *s)
         return info;
     }
     for (int i = 1; i < s->nb_pending; i++)
-        if (s->pending[i].pts < s->pending[min].pts)
+        if (s->pending[i].order < s->pending[min].order)
             min = i;
     info = s->pending[min];
-    s->pending[min] = s->pending[--s->nb_pending];
+    memmove(s->pending + min, s->pending + min + 1, (--s->nb_pending - min) * sizeof(*s->pending));
     return info;
 }
 
@@ -338,26 +389,39 @@ static int cedar_output(AVCodecContext *avctx, AVFrame *frame)
         pic = RequestPicture(s->dec, 0);
         if (!pic)
             return AVERROR(EAGAIN);
+        if (!s->nb_pending) {           /* more pictures than packets: no frame to put it in */
+            s->nb_pictures++;
+            s->nb_no_pts++;
+            av_log(avctx, AV_LOG_WARNING, "picture without a packet dropped\n");
+            ReturnPicture(s->dec, pic);
+            continue;
+        }
         info = cedar_take_pts(s);
-        if (!info.discard)
+        if (info.discard) {
+            s->nb_discarded++;
+            ReturnPicture(s->dec, pic);
+            continue;
+        }
+
+        left = pic->nLeftOffset;
+        top = pic->nTopOffset;
+        width = (pic->nRightOffset > left ? pic->nRightOffset : pic->nWidth) - left;
+        height = (pic->nBottomOffset > top ? pic->nBottomOffset : pic->nHeight) - top;
+        if (avctx->width != width || avctx->height != height) {
+            ret = ff_set_dimensions(avctx, width, height);
+            if (ret < 0)
+                goto out;
+        }
+
+        /* Fails when GStreamer gave up the packet's frame (e.g. one the decoder skipped):
+         * drop the picture rather than stop playback */
+        if (output_buffer(avctx, frame, info.reordered_opaque, AV_PIX_FMT_NV21, width, height) >= 0)
             break;
-        s->nb_discarded++;
+        av_log(avctx, AV_LOG_WARNING, "no frame for picture %"PRId64" (packet %"PRId64"), dropped\n",
+               s->nb_pictures, info.reordered_opaque);
+        av_frame_unref(frame);
         ReturnPicture(s->dec, pic);
     }
-
-    left = pic->nLeftOffset;
-    top = pic->nTopOffset;
-    width = (pic->nRightOffset > left ? pic->nRightOffset : pic->nWidth) - left;
-    height = (pic->nBottomOffset > top ? pic->nBottomOffset : pic->nHeight) - top;
-    if (avctx->width != width || avctx->height != height) {
-        ret = ff_set_dimensions(avctx, width, height);
-        if (ret < 0)
-            goto out;
-    }
-
-    ret = output_buffer(avctx, frame, info.reordered_opaque, AV_PIX_FMT_NV21, width, height);
-    if (ret < 0)
-        goto out;
 
     /* The hardware wrote to memory the CPU may still have cached */
     CdcMemFlushCache(s->memops, pic->pData0, pic->nLineStride * pic->nHeight);
@@ -405,15 +469,14 @@ static int cedar_submit(AVCodecContext *avctx)
     data.pData = buf0;
     data.nLength = pkt->size;
     data.nPts = -1;
-    if (pkt->pts != AV_NOPTS_VALUE || pkt->dts != AV_NOPTS_VALUE) {
-        if (s->nb_pending == MAX_PENDING) /* frames the decoder dropped: forget the oldest */
-            memmove(s->pending, s->pending + 1, --s->nb_pending * sizeof(*s->pending));
-        s->pending[s->nb_pending++] = (CedarPktInfo) {
-            .pts              = pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts,
-            .reordered_opaque = avctx->reordered_opaque, /* set by the caller for this packet */
-            .discard          = !!(pkt->flags & AV_PKT_FLAG_DISCARD),
-        };
-    }
+    if (s->nb_pending == MAX_PENDING)   /* frames the decoder dropped: forget the oldest */
+        memmove(s->pending, s->pending + 1, --s->nb_pending * sizeof(*s->pending));
+    s->pending[s->nb_pending++] = (CedarPktInfo) {
+        .order            = display_order(s, pkt),
+        .pts              = pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts,
+        .reordered_opaque = avctx->reordered_opaque, /* set by the caller for this packet */
+        .discard          = !!(pkt->flags & AV_PKT_FLAG_DISCARD),
+    };
     data.bIsFirstPart = 1;
     data.bIsLastPart = 1;
     reserve_frame(avctx, AV_PIX_FMT_NV21);
@@ -494,47 +557,51 @@ out:
     return ret;
 }
 
+/* AVERROR(EAGAIN) only once FFmpeg's buffered packet is taken: gst-libav sends the next packet
+ * right away and treats its refusal (the decoder still full) as a fatal "Failed to send data
+ * for decoding". So while the stream buffer has no room for the waiting packet, decoding goes
+ * on until it has, or a picture comes out. */
 static int cedar_receive_frame(AVCodecContext *avctx, AVFrame *frame)
 {
     CedarDecContext *s = avctx->priv_data;
-    int ret, need_input = 0;
+    int ret, need_input = 0, stalled = 0;
 
     if (s->sw)
         return sw_receive_frame(avctx, frame);
 
-    for (int step = 0; step < MAX_DECODE_STEPS; step++) {
+    for (;;) {
         ret = cedar_output(avctx, frame);
         if (ret != AVERROR(EAGAIN))
             return ret;
 
-        /* Feed input: one packet at a time, at most MAX_PENDING ahead of the output */
-        if (!s->eof && (s->pkt_pending || s->nb_pending < MAX_PENDING)) {
-            if (!s->pkt_pending) {
-                ret = ff_decode_get_packet(avctx, s->pkt);
-                if (ret == AVERROR_EOF)
-                    s->eof = 1;
-                else if (ret < 0 && ret != AVERROR(EAGAIN))
-                    return ret;
-                else if (ret == 0)
-                    s->pkt_pending = 1;
-                need_input = ret == AVERROR(EAGAIN);
-            }
-            if (s->pkt_pending) {
-                ret = cedar_submit(avctx);
-                if (ret < 0 && ret != AVERROR(EAGAIN))
-                    return ret;
-            }
+        if (!s->eof && !s->pkt_pending) {
+            ret = ff_decode_get_packet(avctx, s->pkt);
+            need_input = ret == AVERROR(EAGAIN);
+            if (ret == AVERROR_EOF)
+                s->eof = 1;
+            else if (ret == 0)
+                s->pkt_pending = 1;
+            else if (!need_input)
+                return ret;
+        }
+        if (s->pkt_pending) {
+            ret = cedar_submit(avctx);
+            if (ret < 0 && ret != AVERROR(EAGAIN))
+                return ret;
         }
 
         ret = DecodeVideoStream(s->dec, s->eof, 0, 0, 0);
         switch (ret) {
         case VDECODE_RESULT_FRAME_DECODED:
         case VDECODE_RESULT_KEYFRAME_DECODED:
+            stalled = 0;
+            continue;
         case VDECODE_RESULT_OK:
         case VDECODE_RESULT_CONTINUE:
-        case VDECODE_RESULT_NO_FRAME_BUFFER:
         case VDECODE_RESULT_RESOLUTION_CHANGE:
             continue;
+        case VDECODE_RESULT_NO_FRAME_BUFFER:
+            break;
         case VDECODE_RESULT_NO_BITSTREAM:
             if (s->eof) {
                 ret = cedar_output(avctx, frame);
@@ -542,13 +609,20 @@ static int cedar_receive_frame(AVCodecContext *avctx, AVFrame *frame)
             }
             if (need_input && !s->pkt_pending)
                 return AVERROR(EAGAIN);
-            continue;
+            if (!s->pkt_pending)
+                continue;               /* the next packet */
+            break;
         default:
             av_log(avctx, AV_LOG_ERROR, "DecodeVideoStream failed: %d\n", ret);
             return AVERROR_EXTERNAL;
         }
+        /* No progress: give the hardware a moment; a decoder stuck for 2 s is an error */
+        if (++stalled > 2000) {
+            av_log(avctx, AV_LOG_ERROR, "decoder stalled\n");
+            return AVERROR_EXTERNAL;
+        }
+        av_usleep(1000);
     }
-    return AVERROR(EAGAIN);
 }
 
 static void cedar_flush(AVCodecContext *avctx)
@@ -565,6 +639,7 @@ static void cedar_flush(AVCodecContext *avctx)
     s->pkt_pending = 0;
     s->eof = 0;
     s->nb_pending = 0;
+    s->max_poc = INT_MIN;
 }
 
 static const AVClass cedar_h264_dec_class = {

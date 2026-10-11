@@ -177,9 +177,9 @@ Keep a Latin layout such as `us` in the list for typing addresses.
 ## ⚠️ Known limitations
 
 - In pages, only H.264 is decoded in hardware; VP9 and other codecs use the CPU (720p30 VP9 at
-  8 Mbit/s: ~52% CPU). 1080p60 video shows ~22 frames/s: every frame is decoded, but composing a frame
-  with a 1080p picture takes the compositor two screen refreshes; 720p plays smoothly (mpv, drawing
-  straight to the screen, shows ~90% of 1080p60).
+  8 Mbit/s: ~52% CPU). 1080p video shows ~18-25 frames/s: every frame is decoded, but copying and
+  uploading 1080p pictures doesn't keep up; 720p plays smoothly, 720p60 included (~57 of 60 frames/s
+  shown). mpv, drawing straight to the screen, shows ~90% of 1080p60.
 - No video calls (WebRTC) and no DRM-protected video (Netflix, Spotify…).
 - The desktop YouTube site needs more memory than the device has; the default mobile one works.
 - One page at a time, no tabs.
@@ -651,7 +651,13 @@ demuxers for MP4/WebM/Ogg/MP3/WAV, parsers, gst-libav decoders, Opus/Vorbis, GL 
   switch decoders once playback started. gst-libav matches frames by `reordered_opaque` and drops
   frames whose buffer wasn't requested in decoding order ("ghost frames"; with B-frames that froze
   the picture after the first frame), so a buffer is reserved per packet as it goes into the decoder
-  and the picture copied into it when it comes out. The GStreamer registry is named after
+  and the picture copied into it when it comes out. gst-libav's packets carry no timestamps (all 0),
+  so each picture (the hardware outputs display order) is matched to the waiting packet first in
+  display order, by its picture order count from FFmpeg's H.264 parser; matched in decoding order
+  instead, B-frame streams got decreasing timestamps and ~10 of 60 frames/s never reached the screen.
+  It asks for input (`EAGAIN`) only once it took FFmpeg's buffered packet: gst-libav treats a refused
+  packet as fatal ("Failed to send data for decoding", which stopped playback now and then). A picture
+  with no frame to go into is dropped rather than failing playback. The GStreamer registry is named after
   `libavcodec`'s mtime and size: it's only rescanned when a plugin file changes, not the FFmpeg it
   loads. On YouTube a user script reports VP9/AV1 as unsupported (`MediaSource.isTypeSupported`,
   `mediaCapabilities`, `canPlayType`), so it serves H.264.
@@ -661,13 +667,17 @@ demuxers for MP4/WebM/Ogg/MP3/WAV, parsers, gst-libav decoders, Opus/Vorbis, GL 
   CPU decodes 720p VP9 at ~115 fps (4 threads). (It also needed GLES forced through `GST_GL_API` and a
   `libGL.so.1` stub for its X11 backend.) WebKit's own sink is used: frames in system memory.
 - **YUV to the GPU** (patch 0012): decoded I420/NV12/NV21 frames go to the compositor as they are and
-  are converted to RGB by its shader, not by a CPU `videoconvert`.
+  are converted to RGB by its shader, not by a CPU `videoconvert`. Uploading a 720p frame costs the
+  compositor ~5 ms of CPU.
+- **TextureMapper compositor** (`WEBKIT_USE_SKIA_FOR_COMPOSITION=0` in `launch.sh`; tiles are still
+  painted by Skia): Skia composited a 720p video frame in ~10 ms of GPU time, TextureMapper in ~4 ms.
+  720p60 went from ~44 to ~58 frames/s composited; page scrolling is 59 fps with either.
 - **Audio:** `alsasink` with the device's own libasound (not bundled), so its `asound.conf` (dmix,
   software volume) applies.
 - **Registry:** only the bundled plugins (`GST_PLUGIN_SYSTEM_PATH`), scanned in-process
   (`GST_REGISTRY_FORK=no`) and cached in `/mnt/UDISK/wpe-browser/cache/gstreamer-registry.bin`.
 - **Measured** (whole system, 4 cores): 720p25 H.264 file on Cedar ~13% CPU, 0 frames dropped
-  (software fallback ~31%); mobile YouTube (H.264 on Cedar) ~38% CPU with the page, drops only in
+  (software fallback ~31%); 720p60 H.264 on Cedar ~44% CPU, all 60 frames/s decoded, ~57 shown; mobile YouTube (H.264 on Cedar) ~38% CPU with the page, drops only in
   the first seconds; 720p30 VP9 8 Mbit/s in software ~52%, 30 of 30 frames/s shown. The desktop
   YouTube site is closed by the low-memory watchdog.
 - With `PLAY_YOUTUBE_IN_MPV=1` the page's own player is kept paused under the **▶ Play in mpv** buttons

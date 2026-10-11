@@ -83,6 +83,10 @@ export GST_PLUGIN_FEATURE_RANK="avdec_av1:NONE,$cedar_rank,${GST_PLUGIN_FEATURE_
 # Rendering tuning for the PowerVR GE8300: 4x MSAA is costly on this GPU, Skia's
 # analytic anti-aliasing looks the same for page content.
 export WEBKIT_SKIA_MSAA_SAMPLE_COUNT=${WEBKIT_SKIA_MSAA_SAMPLE_COUNT:-0}
+# Layers composited by TextureMapper instead of Skia (tiles are still painted by Skia): Skia
+# draws a 720p video frame in ~10 ms of GPU time (TextureMapper: ~4 ms), which held 720p60 at
+# ~44 fps; with TextureMapper it shows ~58. Page scrolling is the same (59 fps either way).
+export WEBKIT_USE_SKIA_FOR_COMPOSITION=${WEBKIT_USE_SKIA_FOR_COMPOSITION:-0}
 # One web process at a time: no per-site process swapping and no cache of suspended
 # processes (each costs 100-200 MB; several at once exhaust the 1 GB RAM).
 export WEBKIT_DISABLE_PSON=1
