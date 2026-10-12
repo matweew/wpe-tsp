@@ -2555,9 +2555,11 @@ int main(int argc, char **argv)
     const char *limit_env = g_getenv("WPE_TSP_PAGE_MEMORY_LIMIT_MB");
     guint page_limit_mb = limit_env ? (guint)CLAMP(g_ascii_strtoull(limit_env, NULL, 10), 150, 900) : WEB_PROCESS_MEMORY_LIMIT_MB;
     webkit_memory_pressure_settings_set_memory_limit(web_memory, page_limit_mb);
-    /* strict before conservative: WebKit requires conservative < strict at every call */
-    webkit_memory_pressure_settings_set_strict_threshold(web_memory, 0.6);
-    webkit_memory_pressure_settings_set_conservative_threshold(web_memory, 0.4);
+    /* strict before conservative: WebKit requires conservative < strict at every call. A YouTube
+     * page with a playing video uses ~390 MB: lower thresholds relieved (GC, cache purges) at every
+     * poll and froze the video (WebKit < 2.54.1 undercounted the footprint and never reached them) */
+    webkit_memory_pressure_settings_set_strict_threshold(web_memory, 0.9);
+    webkit_memory_pressure_settings_set_conservative_threshold(web_memory, 0.8);
     webkit_memory_pressure_settings_set_kill_threshold(web_memory, 1.0);
     webkit_memory_pressure_settings_set_poll_interval(web_memory, MEMORY_POLL_INTERVAL_S);
 

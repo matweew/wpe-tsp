@@ -58,7 +58,7 @@ cd "$BUILD"
     --extra-ldflags="-L$CEDAR_LIBS -Wl,-rpath-link,$CEDAR_LIBS" \
     --enable-parser=h264,vp8,vp9,mpeg4video,aac,aac_latm,mpegaudio,opus,vorbis,flac \
     --enable-filter=buffer,buffersink,yadif
-make -j"$(nproc)"
+make -j"$(( $(nproc) > 1 ? $(nproc) / 2 : 1 ))" # half the PC
 make install
 echo "=== FFmpeg $VERSION installed into $OUT ==="
 ls -la "$OUT/lib"

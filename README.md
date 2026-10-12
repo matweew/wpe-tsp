@@ -310,7 +310,7 @@ first mouse click with a hidden pointer only shows it.
 **Memory (1 GB RAM, no swap, no zram in the kernel).**
 - One web process at a time: process-swap-on-navigation and the web-process cache are disabled (WebKit
   patch 0007, enabled from `launch.sh`). Several processes at once exhausted the RAM.
-- WebKit memory-pressure settings: the page process frees caches at 40% / 60% of its limit and is killed
+- WebKit memory-pressure settings: the page process frees caches at 80% / 90% of its limit and is killed
   at the limit (`PAGE_MEMORY_LIMIT_MB`, default 550). The network process has a 200 MB limit and is never
   killed.
 - Cache model `DOCUMENT_BROWSER`: no back/forward page cache, small in-memory caches.
@@ -361,7 +361,7 @@ needs hard links, which exFAT lacks, so it lives on the internal ext4 partition)
 
 | What | Where it comes from |
 |---|---|
-| WPE WebKit 2.54.0 | release tarball [wpewebkit-2.54.0.tar.xz](https://wpewebkit.org/releases/wpewebkit-2.54.0.tar.xz) from [wpewebkit.org/release](https://wpewebkit.org/release/), downloaded by `scripts/build-webkit.sh` into `src/` and patched with `patches/` |
+| WPE WebKit 2.54.1 | release tarball [wpewebkit-2.54.1.tar.xz](https://wpewebkit.org/releases/wpewebkit-2.54.1.tar.xz) from [wpewebkit.org/release](https://wpewebkit.org/release/), downloaded by `scripts/build-webkit.sh` into `src/` and patched with `patches/` |
 | SDL2 headers | TrimUI's [toolchain_sdk_smartpro](https://github.com/trimui/toolchain_sdk_smartpro) release `SDL2-2.26.1.GE8300.tgz` (Dockerfile) |
 | SDL2 / SDL2_ttf libraries to link against | copied from the device by `scripts/fetch-device-sdl.sh` |
 | Build-container packages | Debian bookworm (amd64 + arm64 multiarch), see `Dockerfile`; GStreamer 1.22 and its plugins (in-page video) are bundled from there |
@@ -415,10 +415,11 @@ scripts/fetch-device-sdl.sh
 # 3a. Minimal FFmpeg for GStreamer's gst-libav (in-page video decoders, ~4 MB, a few minutes)
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/work wpe-tsp-builder scripts/build-ffmpeg.sh
 
-# 3. Build WPE WebKit: downloads the 2.54.0 tarball into src/, applies patches/, builds and
-#    installs into build/stage/ (first run ~1-1.5 h; the argument is the number of jobs)
+# 3. Build WPE WebKit: downloads the 2.54.1 tarball into src/, applies patches/, builds and
+#    installs into build/stage/ (first run ~1.5-2 h; uses half the PC: half the CPU threads, fewer
+#    jobs if half the RAM can't hold them at ~1.5 GB each; a number of jobs as argument overrides it)
 docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/work \
-    wpe-tsp-builder scripts/build-webkit.sh 12
+    wpe-tsp-builder scripts/build-webkit.sh
 
 # 4. Build the app and assemble the device package in dist/WPE (~1 min; downloads EasyList and
 #    EasyPrivacy into build/adblock on the first run, ADBLOCK_REFRESH=1 to update them)
@@ -436,8 +437,12 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/work wpe-tsp-builder scrip
   the GPU process, bubblewrap sandbox, WebDriver, spellcheck, speech, gamepad API, ATK, AVIF/JPEG XL,
   hyphenation, introspection and docs. WebGL is built (ANGLE, +6 MB) and switched at runtime.
 - To rebuild WebKit after editing `src/`, run step 3 again (incremental). Patches are applied only once
-  (marker file `src/wpewebkit-2.54.0/.patched`). After changing a patch, delete `src/wpewebkit-2.54.0` so it
+  (marker file `src/wpewebkit-2.54.1/.patched`). After changing a patch, delete `src/wpewebkit-2.54.1` so it
   is re-extracted and re-patched.
+- A new WebKit bug-fix release without a full rebuild: diff the old and new release tarballs, apply the
+  new release plus `patches/` to a copy, sync the changed files into the existing tree and build it with
+  `-e WEBKIT_SRC=/work/src/<existing tree>` (the build directory stays tied to that path; only what the
+  changes reach is recompiled).
 - `scripts/package.sh` compiles `app/*.c`, copies WebKit's libraries and helpers, the GnuTLS GIO module,
   fonts, the MIME cache, XKB data and keymaps, and the ad-block rule list. It then runs
   `scripts/bundle-libs.sh`, which resolves the shared-library closure, bundles glibc, and sets the
@@ -769,13 +774,12 @@ on the backslash key); digits and symbols are built in. A layout name that doesn
 
 ## WebKit patches
 
-All in `patches/`, applied by `scripts/build-webkit.sh` to the 2.54.0 release tarball:
+All in `patches/`, applied by `scripts/build-webkit.sh` to the 2.54.1 release tarball:
 
 | Patch | Why |
 |---|---|
 | `0001-surfaceless-default-display-fallback` | PowerVR EGL 1.4 has no client extensions (`EGL_MESA_platform_surfaceless`, `eglGetPlatformDisplay`). Fall back to `eglGetDisplay(EGL_DEFAULT_DISPLAY)` with `EGL_KHR_surfaceless_context`, so the WebProcess gets a GPU context. |
 | `0002-gcc12-layoutrect-non-constexpr` | GCC 12 rejects a `constexpr` function calling a non-constexpr constructor. |
-| `0003-guard-jshtmlmediaelement-custom-video` | Missing `ENABLE(VIDEO)` guard breaks builds without video. |
 | `0004-webkit-gio-unix-include-dir` | `gio-unix-2.0` include path isn't propagated to the WebKit target in this cross setup. |
 | `0005-drm-fourcc-fallback-without-libdrm` | `DRM_FORMAT_XRGB8888` used without libdrm. |
 | `0006-skia-epoxy-core-gles3-proc-fallback` | The PowerVR `eglGetProcAddress` returns NULL for core GLES 3 functions (`glGetStringi`), so Skia's GL interface failed and the WebProcess crashed. Fall back to `dlsym(libGLESv2)`. |

@@ -2,17 +2,25 @@
 # Configure + build WPE WebKit 2.54 for the TrimUI Smart Pro. Runs inside wpe-tsp-builder.
 # Usage (host): docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/work \
 #                   wpe-tsp-builder scripts/build-webkit.sh [jobs]
+# jobs: default half the CPU threads, fewer if half the RAM holds fewer (~1.5 GB per job)
 # Downloads the WPE WebKit release tarball into src/ if needed and applies patches/*.patch.
 set -euo pipefail
 
-WEBKIT_VERSION=2.54.0
-SRC=/work/src/wpewebkit-${WEBKIT_VERSION}
+WEBKIT_VERSION=2.54.1
+# WEBKIT_SRC: an existing patched tree to build instead (e.g. one updated in place from the previous
+# release, so the build directory and its objects stay valid)
+SRC=${WEBKIT_SRC:-/work/src/wpewebkit-${WEBKIT_VERSION}}
 BUILD=/work/build/webkit
 # Install prefix == location on the device, so WebKit finds its helper processes
 # (WPEWebProcess, WPENetworkProcess) at the compiled-in libexec path.
 PREFIX=/mnt/SDCARD/Apps/WPE
 STAGE=/work/build/stage
-JOBS=${1:-10}
+# Jobs: by default half of the PC, the smaller of half the CPU threads and half the RAM at
+# ~1.5 GB per job (WebCore's unified sources need that much each)
+half_cpus=$(( $(nproc) / 2 ))
+half_ram_jobs=$(( $(awk '/^MemTotal:/ {print $2}' /proc/meminfo) / 2 / 1536000 ))
+JOBS=${1:-$(( half_cpus < half_ram_jobs ? half_cpus : half_ram_jobs ))}
+[ "$JOBS" -ge 1 ] || JOBS=1
 
 # Fetch + unpack the release tarball on first use, then apply our patches once.
 if [ ! -d "$SRC" ]; then
