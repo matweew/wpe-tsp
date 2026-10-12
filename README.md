@@ -100,6 +100,17 @@ an image (copy address, save), a video (play/pause, mute, loop, copy address, do
 (copy), a text field (cut, copy, paste) or the page (back, forward, reload). Pages with menus of their
 own (e.g. desktop YouTube's player) get the right click instead.
 
+**In mpv** (YouTube with `PLAY_YOUTUBE_IN_MPV=1`, media files):
+
+| Control | Action |
+|---|---|
+| A | Pause / play |
+| B | Quit (back to the page) |
+| D-pad left / right | Seek −10 s / +10 s |
+| L1 / R1 | Seek −30 s / +30 s |
+| L2 / R2 | Seek −120 s / +120 s |
+| MENU | Playback statistics |
+
 **On-screen keyboard** (opens for the address bar and text fields):
 
 | Control | Action |
