@@ -1490,6 +1490,18 @@ static gboolean on_decide_policy(WebKitWebView *web_view, WebKitPolicyDecision *
     return TRUE;
 }
 
+/* Links with target="_blank" and window.open(): the browser has a single view, so the page opens
+ * in it (WebKit does nothing when no view is created). Only for clicks: pop-ups pages open by
+ * themselves are dropped. */
+static WebKitWebView *on_create(WebKitWebView *web_view, WebKitNavigationAction *action, gpointer user_data)
+{
+    (void)user_data;
+    const char *uri = webkit_uri_request_get_uri(webkit_navigation_action_get_request(action));
+    if (uri && *uri && strcmp(uri, "about:blank") && webkit_navigation_action_is_user_gesture(action))
+        webkit_web_view_load_uri(web_view, uri);
+    return NULL;
+}
+
 static void on_mouse_target_changed(WebKitWebView *web_view, WebKitHitTestResult *hit, guint modifiers, gpointer user_data)
 {
     (void)web_view; (void)modifiers; (void)user_data;
@@ -2579,6 +2591,7 @@ int main(int argc, char **argv)
     g_signal_connect(app.web_view, "notify::title", G_CALLBACK(on_title_changed), NULL);
     g_signal_connect(app.web_view, "decide-policy", G_CALLBACK(on_decide_policy), NULL);
     g_signal_connect(app.web_view, "context-menu", G_CALLBACK(on_context_menu), NULL);
+    g_signal_connect(app.web_view, "create", G_CALLBACK(on_create), NULL);
     g_signal_connect(app.web_view, "notify::uri", G_CALLBACK(on_uri_changed), NULL);
     if (app.play_youtube)
         setup_embed_play(app.web_view);
