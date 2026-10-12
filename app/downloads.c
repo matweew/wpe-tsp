@@ -619,6 +619,11 @@ static char *downloads_page_html(void)
     return g_string_free(html, FALSE);
 }
 
+gboolean downloads_is_media(const char *name)
+{
+    return is_media(name, NULL);
+}
+
 char *downloads_open_file_uri(const char *uri)
 {
     const char *prefix = DOWNLOADS_URI "/open/";

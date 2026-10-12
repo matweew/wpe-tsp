@@ -33,6 +33,8 @@ char *downloads_status(double *progress);
 char *downloads_handle_page(const char *uri);
 /* DOWNLOADS_URI/open/<name> (a saved file): its file:// URI for the browser to load, else NULL */
 char *downloads_open_file_uri(const char *uri);
+/* Video/audio by file name extension */
+gboolean downloads_is_media(const char *name);
 
 /* Free space in the download directory, in bytes (-1 if unknown). */
 gint64 downloads_free_space(void);

@@ -2229,13 +2229,44 @@ static void on_load_changed(WebKitWebView *web_view, WebKitLoadEvent load_event,
     }
 }
 
+/* A saved video/audio file from the Downloads page: in mpv (also AV1, which the page can't
+ * decode; H.264 on the hardware decoder there too) or in the page */
+static char *saved_media_uri;
+
+static void saved_media_answered(int index, void *user_data)
+{
+    (void)user_data;
+    char *path = saved_media_uri ? g_filename_from_uri(saved_media_uri, NULL, NULL) : NULL;
+    if (index == 0 && path)
+        player_play_url(path);
+    else if (index == 1 && saved_media_uri)
+        webkit_web_view_load_uri(app.web_view, saved_media_uri);
+    g_free(path);
+    g_clear_pointer(&saved_media_uri, g_free);
+    app.needs_present = TRUE;
+}
+
 static gboolean on_load_failed(WebKitWebView *web_view, WebKitLoadEvent load_event, char *uri, GError *error, gpointer user_data)
 {
     (void)load_event; (void)user_data;
     char *file_uri = downloads_open_file_uri(uri); /* the Downloads page opening a saved file */
     if (file_uri) {
-        webkit_web_view_load_uri(web_view, file_uri);
-        g_free(file_uri);
+        char *path = g_filename_from_uri(file_uri, NULL, NULL);
+        char *name = path ? g_path_get_basename(path) : NULL;
+        if (name && downloads_is_media(name) && player_available() && !menu_visible()) {
+            static const char *const items[] = { "Play in mpv", "Play in the page", "Cancel", NULL };
+            char *title = g_strdup_printf("Play %s", name);
+            g_free(saved_media_uri);
+            saved_media_uri = file_uri;
+            menu_open(title, "mpv also plays AV1, which the page can't", items, saved_media_answered, NULL);
+            app.needs_present = TRUE;
+            g_free(title);
+        } else {
+            webkit_web_view_load_uri(web_view, file_uri);
+            g_free(file_uri);
+        }
+        g_free(name);
+        g_free(path);
         return TRUE; /* no error page */
     }
     fprintf(stderr, "[wpe-tsp] load failed: %s: %s\n", uri, error->message);

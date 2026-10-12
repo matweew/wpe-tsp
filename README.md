@@ -40,7 +40,7 @@ you drive it with the gamepad, a USB keyboard and mouse, or the on-screen keyboa
 - 📱 **Portrait mode**: turn the device sideways for long articles and feeds, like mpv does for portrait
   videos.
 - ⬇️ **Downloads**: save files, links and page media to the SD card; open them from the Downloads page
-  (videos and audio play, pages, images and PDFs open in the browser) or delete them.
+  (videos and audio play in mpv or in the page, pages, images and PDFs open in the browser) or delete them.
 - 🕘 **History, home page, search**: start on your home page, the last page or the address bar; anything
   that isn't a URL is searched.
 - 🍪 **Stays logged in**: cookies and site storage are kept across restarts.
@@ -604,7 +604,8 @@ While a download runs, a status strip at the bottom shows the name, % and MB; a 
 notice follows for a few seconds. `wpe-tsp://downloads` (SELECT → Downloads → Show downloads) lists:
 - this session's active downloads (A cancels), plus failed and cancelled ones;
 - **all files in `DOWNLOAD_DIR`** (from any session), newest first, with size and date. Video and audio
-  play in the page (A: play); pages, images, text and PDFs (WebKit's PDF.js viewer) open in the browser
+  play in mpv or in the page (A: play asks which; mpv also plays AV1, the page doesn't; without mpv
+  they play in the page); pages, images, text and PDFs (WebKit's PDF.js viewer) open in the browser
   (A: open). WebKit won't follow a link from the `wpe-tsp:` scheme to `file://`, so the item links to
   `wpe-tsp://downloads/open/<name>`: that request fails on purpose and the browser loads the file from
   its `load-failed` handler (nothing stays in the history; Back returns to the list);
@@ -648,8 +649,9 @@ demuxers for MP4/WebM/Ogg/MP3/WAV, parsers, gst-libav decoders, Opus/Vorbis, GL 
 - **Decoders:** gst-libav with a minimal FFmpeg 5.1.9 (`scripts/build-ffmpeg.sh`: H.264, VP8/9, MPEG-4,
   AAC, MP3, Opus, Vorbis, FLAC; no external libraries, LGPL). Debian's FFmpeg linked ~40 libraries (x264,
   x265, aom, rav1e, codec2, flite, librsvg…: 150+ MB); the same release keeps sonames and symbol
-  versions, so Debian's plugin loads it unchanged. FFmpeg's AV1 decoder is hidden
-  (`GST_PLUGIN_FEATURE_RANK=avdec_av1:NONE`), so sites pick H.264 or VP9.
+  versions, so Debian's plugin loads it unchanged. There is no AV1 decoder (no hardware support, too
+  slow in software), so sites pick H.264 or VP9; saved AV1 files play in mpv (dav1d, 720p30 at about
+  half the CPU), which the Downloads page offers for every saved video.
 - **Hardware H.264** (`HW_VIDEO_DECODE=1`): `ffmpeg-cedar/cedardec.c`, mpv-tsp's `h264_cedar` decoder
   ported to FFmpeg 5.1, appears in GStreamer as `avdec_h264_cedar`, ranked above `avdec_h264`
   (`launch.sh`). It runs libcedarc (bundled from `runtime/mpv/lib`, `libawh264.so` included) and copies
