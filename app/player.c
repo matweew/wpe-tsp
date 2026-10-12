@@ -15,6 +15,7 @@
 
 #define RESOLVE_OUT "/tmp/wpe-tsp-yurl"
 #define RESOLVE_ERR "/tmp/wpe-tsp-yurl-err"
+#define MPV_LOG "/tmp/mpv_last.log"
 /* youtube-tsp's format: H.264 + AAC up to 720p (what the device decodes in software in real time) */
 #define YT_DLP_FORMAT "bestvideo[vcodec^=avc][width<=1280][height<=1280]+bestaudio[acodec^=mp4a]" \
                       "/best[ext=mp4][width<=1280][height<=1280]/22/18"
@@ -254,6 +255,23 @@ static void reap(GPid pid)
 
 static void start_resolve(void);
 
+/* mpv's log (--log-file) ends with "Exiting... (Errors when loading file)" when it couldn't play
+ * the URLs, and shows HTTP errors when they were refused (403: tied to another address, expired) */
+static gboolean mpv_log_failed(void)
+{
+    FILE *f = fopen(MPV_LOG, "r");
+    if (!f)
+        return FALSE;
+    char tail[8192];
+    if (fseek(f, -(long)(sizeof(tail) - 1), SEEK_END) != 0)
+        rewind(f);
+    size_t n = fread(tail, 1, sizeof(tail) - 1, f);
+    fclose(f);
+    tail[n] = 0;
+    return strstr(tail, "Exiting... (Errors when loading file)") || strstr(tail, "HTTP error 403")
+        || strstr(tail, "HTTP error 404") || strstr(tail, "HTTP error 410");
+}
+
 static void on_mpv_exited(GPid pid, gint status, gpointer user_data)
 {
     (void)user_data;
@@ -261,15 +279,19 @@ static void on_mpv_exited(GPid pid, gint status, gpointer user_data)
     pl.state = P_IDLE;
     if (pl.cb.restore_display)
         pl.cb.restore_display(pl.cb.user_data);
-    fprintf(stderr, "[wpe-tsp] video: player exited\n");
-    if (pl.from_cache && !g_spawn_check_wait_status(status, NULL)
-        && g_get_monotonic_time() - pl.started < CACHE_FAIL_S * G_USEC_PER_SEC) {
+    /* The exit status isn't reliable here (GLib reported 0 for an mpv that exited with "Errors when
+     * loading file", HTTP 403 on cached URLs after the network changed): also read mpv's log */
+    gboolean failed = !g_spawn_check_wait_status(status, NULL) || mpv_log_failed();
+    fprintf(stderr, "[wpe-tsp] video: player exited%s\n", failed ? " (failed)" : "");
+    if (pl.from_cache && failed && g_get_monotonic_time() - pl.started < CACHE_FAIL_S * G_USEC_PER_SEC) {
         fprintf(stderr, "[wpe-tsp] video: cached URLs failed, resolving again\n");
         cache_drop(pl.watch_url);
         pl.from_cache = FALSE;
         start_resolve();
         return;
     }
+    if (failed && pl.watch_url) /* broke later: resolve again next time instead of replaying it */
+        cache_drop(pl.watch_url);
     status_changed();
     if (pl.cb.finished)
         pl.cb.finished(TRUE, pl.cb.user_data);
@@ -283,8 +305,17 @@ static void start_mpv(const char *video_url, const char *audio_url, int rotate)
     g_ptr_array_add(argv, g_strdup(mpv));
     g_ptr_array_add(argv, g_strdup("--fs"));
     g_ptr_array_add(argv, g_strdup("--no-terminal"));
-    g_ptr_array_add(argv, g_strdup("--log-file=/tmp/mpv_last.log"));
+    g_ptr_array_add(argv, g_strdup("--log-file=" MPV_LOG));
     g_ptr_array_add(argv, g_strdup("--no-ytdl"));
+    /* googlevideo.com connections drop or stall now and then: a 720p60 video froze at 19 s while
+     * its audio (downloaded already) played on, and a connection idle while mpv's cache was full
+     * got no more data, without any error. A socket timeout (FFmpeg's http "timeout", which reaches
+     * the TCP socket; rw_timeout doesn't) turns a stall into an error, and reconnect resumes with a
+     * range request. Tested by cutting the connection for 4 s: playback went on. */
+    g_ptr_array_add(argv, g_strdup("--stream-lavf-o-append=reconnect=1"));
+    g_ptr_array_add(argv, g_strdup("--stream-lavf-o-append=reconnect_on_network_error=1"));
+    g_ptr_array_add(argv, g_strdup("--stream-lavf-o-append=reconnect_delay_max=30"));
+    g_ptr_array_add(argv, g_strdup("--stream-lavf-o-append=timeout=10000000"));
     g_ptr_array_add(argv, g_strdup_printf("--config-dir=%s", pl.dir));
     g_ptr_array_add(argv, g_strdup_printf("--sub-fonts-dir=%s", pl.fonts_dir));
     if (rotate)
@@ -480,6 +511,11 @@ void player_play_youtube(const char *watch_url)
         return;
     }
     start_resolve();
+}
+
+gboolean player_failed(void)
+{
+    return pl.error != NULL;
 }
 
 void player_cancel(void)

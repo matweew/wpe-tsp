@@ -1060,8 +1060,12 @@ static void player_status_changed(void *user_data)
 
 static void player_finished(gboolean played, void *user_data)
 {
-    (void)played; (void)user_data;
-    /* Stay where we are: the video page (comments, likes, description) stays open to read */
+    (void)user_data;
+    /* Stay where we are: the video page (comments, likes, description) stays open to read.
+     * yt-dlp failed (killed, no stream URL...): forget the page, so reloading it tries again
+     * (not after B cancelled it: YouTube's own URL rewrite would start it again) */
+    if (!played && player_failed())
+        g_clear_pointer(&app.video_page, g_free);
     app.needs_present = TRUE;
 }
 
@@ -1166,6 +1170,17 @@ static const char WATCH_PLAY_JS[] =
     "update();"
     "new MutationObserver(() => { if (!queued) { queued = true; requestAnimationFrame(update); } })"
     "  .observe(document.documentElement, { childList: true, subtree: true });"
+    /* YouTube draws its own controls (replay, skip, progress) over the button once a video ended:
+     * take presses anywhere over the button's area first, before YouTube sees them */
+    "const over = e => { if (!button || !button.isConnected) return false;"
+    "  const r = button.getBoundingClientRect(), t = e.touches ? e.touches[0] : e;"
+    "  return t && r.width && t.clientX >= r.left && t.clientX < r.right && t.clientY >= r.top && t.clientY < r.bottom; };"
+    "['pointerdown', 'mousedown', 'touchstart', 'pointerup', 'mouseup', 'touchend'].forEach(type =>"
+    "  window.addEventListener(type, e => { if (over(e)) { e.preventDefault(); e.stopImmediatePropagation(); } },"
+    "    { capture: true, passive: false }));"
+    "window.addEventListener('click', e => { if (!over(e)) return;"
+    "  e.preventDefault(); e.stopImmediatePropagation();"
+    "  window.webkit.messageHandlers.wpeTspPlay.postMessage(location.href); }, true);"
     "})()";
 
 static void on_embed_play(WebKitUserContentManager *manager, JSCValue *value, gpointer user_data)

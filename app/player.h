@@ -33,3 +33,4 @@ void player_cancel(void);                           /* cancel while resolving */
 
 /* Status strip text ("Loading video… B: cancel", errors), newly allocated, or NULL. */
 char *player_status(void);
+gboolean player_failed(void);                       /* the last video failed (its error is still shown) */
