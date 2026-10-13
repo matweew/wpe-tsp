@@ -33,31 +33,6 @@ CEDARC_LIBS = {'libvdecoder.so', 'libVE.so', 'libMemAdapter.so', 'libcdc_base.so
                'libvideoengine.so', 'libcwrapper.so', 'liblogwrapper.so', 'libawh264.so'}
 GH = 'https://raw.githubusercontent.com'
 
-# mpv-tsp's components (versions from its Dockerfile): name, license, source, license files
-MPV_TSP = [
-    ('mpv 0.36.0', 'LGPL-2.1-or-later (built with -Dgpl=false)', 'https://github.com/mpv-player/mpv',
-     [f'{GH}/mpv-player/mpv/v0.36.0/Copyright', f'{GH}/mpv-player/mpv/v0.36.0/LICENSE.LGPL']),
-    ('FFmpeg 6.1', 'LGPL-2.1-or-later (without --enable-gpl/--enable-nonfree)', 'https://ffmpeg.org/',
-     [f'{GH}/FFmpeg/FFmpeg/n6.1/LICENSE.md', f'{GH}/FFmpeg/FFmpeg/n6.1/COPYING.LGPLv2.1']),
-    ('OpenSSL 3.5.9', 'Apache-2.0', 'https://www.openssl.org/',
-     [f'{GH}/openssl/openssl/openssl-3.5.9/LICENSE.txt']),
-    ('dav1d 1.3.0', 'BSD-2-Clause', 'https://code.videolan.org/videolan/dav1d',
-     [f'{GH}/videolan/dav1d/1.3.0/COPYING']),
-    ('libass 0.17.1', 'ISC', 'https://github.com/libass/libass', [f'{GH}/libass/libass/0.17.1/COPYING']),
-    ('FreeType 2.13.2', 'FTL', 'https://freetype.org/',
-     [f'{GH}/freetype/freetype/VER-2-13-2/LICENSE.TXT', f'{GH}/freetype/freetype/VER-2-13-2/docs/FTL.TXT']),
-    ('FriBidi 1.0.13', 'LGPL-2.1-or-later', 'https://github.com/fribidi/fribidi',
-     [f'{GH}/fribidi/fribidi/v1.0.13/COPYING']),
-    ('HarfBuzz 8.3.0', 'MIT', 'https://harfbuzz.github.io/', [f'{GH}/harfbuzz/harfbuzz/8.3.0/COPYING']),
-    ('libxml2 2.10.3', 'MIT', 'https://gitlab.gnome.org/GNOME/libxml2', [f'{GH}/GNOME/libxml2/v2.10.3/Copyright']),
-    ('SDL 2.26.1 (TrimUI GE8300 build)', 'Zlib', 'https://github.com/trimui/toolchain_sdk_smartpro',
-     [f'{GH}/libsdl-org/SDL/release-2.26.1/LICENSE.txt']),
-    ('fontconfig (from the device firmware)', 'MIT-style', 'https://www.freedesktop.org/wiki/Software/fontconfig/',
-     ['https://gitlab.freedesktop.org/fontconfig/fontconfig/-/raw/2.13.1/COPYING']),
-    ('Expat (from the device firmware)', 'MIT', 'https://libexpat.github.io/',
-     [f'{GH}/libexpat/libexpat/R_2_5_0/expat/COPYING']),
-]
-
 
 def die(msg):
     sys.exit(f'licenses.py: {msg}')
@@ -272,16 +247,14 @@ Source: https://ffmpeg.org/releases/ffmpeg-{ffmpeg_version}.tar.xz, ffmpeg-cedar
 scripts/build-ffmpeg.sh in https://github.com/matweew/wpe-tsp.
 """, [('LICENSE.md', read(f'{ffmpeg_src}/LICENSE.md')), ('COPYING.LGPLv2.1', read(f'{ffmpeg_src}/COPYING.LGPLv2.1'))])
 
-mpv_texts = []
-for name, lic, url, texts in MPV_TSP:
-    for t in texts:
-        mpv_texts.append((f'{name} ({lic}, {url}): {t.rsplit("/", 1)[-1]}', fetch(t)))
+mpv_licenses = f'{OUT}/mpv/licenses/third-party.txt'
+if not os.path.exists(mpv_licenses):
+    die('runtime/mpv has no licenses/third-party.txt: use an mpv-tsp build that has it')
+mpv_components = re.findall(r'^- (.+)$', read(mpv_licenses), re.M)
 section('mpv and its libraries (mpv-tsp)', files_of('mpv'), """
-The video player, built by mpv-tsp: https://github.com/matweew/mpv-tsp (its Dockerfile has every version
-and source URL; its build scripts are MIT, its changes to mpv and FFmpeg LGPL-2.1-or-later). An LGPL build:
-FFmpeg and mpv without GPL parts. Components: """ + '; '.join(f'{n} ({lic})' for n, lic, _, _ in MPV_TSP) + """;
-CA certificates (mpv/ca-certificates.crt: Mozilla's CA list, MPL-2.0).
-""", mpv_texts + [('CA certificates: MPL-2.0', read(f'{COMMON_LICENSES}/MPL-2.0'))])
+The video player, built by mpv-tsp: https://github.com/matweew/mpv-tsp. An LGPL build: mpv and FFmpeg
+without GPL parts. Its license texts and sources are in mpv/licenses/third-party.txt. Components:
+""" + ''.join(f'- {c}\n' for c in mpv_components), [])
 
 section('libcedarc (Allwinner Cedar video decoder)', files_of('cedarc'), """
 The hardware H.264 decoder library. Copyright Allwinner Technology; it comes without a published license.

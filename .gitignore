@@ -11,3 +11,4 @@ __pycache__/
 /runtime/yt-dlp
 /runtime/mpv/mpv
 /runtime/mpv/lib/
+/runtime/mpv/licenses/
