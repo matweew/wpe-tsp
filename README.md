@@ -31,7 +31,7 @@ you drive it with the gamepad, a USB keyboard and mouse, or the on-screen keyboa
 - 🔄 **yt-dlp updates itself**: the browser checks for new releases daily and installs them after a
   checksum check, so YouTube keeps working.
 - 🛡️ **Ad and tracker blocking**: EasyList + EasyPrivacy (~94,000 rules) built into WebKit, pages load
-  faster and use far less memory.
+  faster and use far less memory. Ads can be allowed per site from the menu.
 - 🎮 **Gamepad-first**: analog pointer, smooth scrolling, and an Android-style on-screen keyboard.
 - ⌨️🖱️ **USB keyboard and mouse**: plug and play, with shortcuts and layout switching.
 - 🌍 **Any keyboard layout**: all XKB layouts (Ukrainian, German, French, Dvorak…) for both keyboards,
@@ -83,7 +83,7 @@ To **update**, unpack a newer release over the old folder; `settings.conf` keeps
 | X | Reload |
 | Y | Right click (context menus) |
 | START | Enter |
-| SELECT | Menu: Back, Forward, Home, History, Downloads, desktop/mobile site, Portrait/Landscape mode, Address bar, Zoom, Exit |
+| SELECT | Menu: Back, Forward, Home, History, Downloads, desktop/mobile site, allow/block ads on this site, Portrait/Landscape mode, Address bar, Zoom (d-pad ◀ ▶ changes it, A resets to 100%), Settings, Exit |
 
 **Brick** (no sticks): the d-pad moves the pointer (slowly at first, faster after ~0.7 s held), **L1 / R1**
 scroll up/down while held, **L2 / R2** are page up/down, and the **F1 / F2** keys go back/forward. The FN
@@ -148,7 +148,13 @@ The d-pad and sticks turn with it, so up is still up for you.
 
 ## ⚙️ Settings
 
-Edit `Apps/WPE/settings.conf` on the SD card; changes apply at the next start.
+**SELECT → Settings** opens a page with every setting below, its value and what it does: the d-pad's
+left/right (or START) changes a choice, START on a text setting (home page, download folder, keyboard
+layouts, ad exceptions) opens a field with the on-screen keyboard, and Enter saves it. Most changes apply
+at once; for the others (page scale, ad blocking on/off, YouTube player, hardware video, keyboard
+layouts, page memory, download folder) the page shows **Restart the browser to apply**, which restarts it
+on the page you were on. The page writes `Apps/WPE/settings.conf`, changing only that setting's line:
+the file can still be edited by hand on the SD card (changes then apply at the next start).
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -159,6 +165,7 @@ Edit `Apps/WPE/settings.conf` on the SD card; changes apply at the next start.
 | `SCALE` | per device | Page zoom: 1.5 = text 1.5× larger. Empty = the same text size on every model: Smart Pro 1.5, Brick 2.0, Brick Pro 1.65 |
 | `USER_AGENT` | `mobile` | `mobile` (iPhone Safari, lighter sites), `desktop`, or a full user-agent string |
 | `AD_BLOCK` | `1` | Ad and tracker blocking; `0` = off |
+| `AD_BLOCK_EXCEPTIONS` | empty | Sites where ads aren't blocked, separated by spaces (each covers its subdomains). The SELECT menu's "Allow ads on <site>" / "Block ads on <site>" updates this line |
 | `HW_VIDEO_DECODE` | `1` | H.264 in pages on the hardware decoder (falls back to software by itself); YouTube in the page is asked for H.264. `0` = software only |
 | `PLAY_YOUTUBE_IN_MPV` | `0` | YouTube only: `1` = in mpv (hardware H.264, smooth 720p); `0` = in the page (software). Other videos always play in the page |
 | `DOWNLOAD_DIR` | `/mnt/SDCARD/Downloads` | Where downloads go |
@@ -352,7 +359,9 @@ the package ships its own glibc and dynamic loader:
   its compiled-in location. The app must be installed exactly there.
 
 `launch.sh` (replaced by updates, not meant for editing) exports the settings `settings.conf` sets as
-`WPE_TSP_*` (an already-set environment variable wins; built-in defaults live in `app/browser.c`), and
+`WPE_TSP_*` (an already-set environment variable wins; built-in defaults live in `app/browser.c`),
+starts the browser again (re-reading `settings.conf`) when it exits with code 75 (the Settings page's
+restart, reopening the page in `/tmp/wpe-tsp-restart-uri`), and
 sets a wake lock, `WEBKIT_SKIA_MSAA_SAMPLE_COUNT=0` (4× MSAA is costly on this GPU), `MALLOC_ARENA_MAX=2`,
 `WEBKIT_DISABLE_PSON=1`, `WEBKIT_DISABLE_WEB_PROCESS_CACHE=1`, `WEBKIT_DMABUF_ION`, the font, TLS-module,
 XKB and MIME paths, and the profile and cache directory `/mnt/UDISK/wpe-browser` (WebKit's disk cache
@@ -580,6 +589,11 @@ Safari content blockers), so blocked requests are never made:
   (peak +140 MB in the browser process), into a 33 MB file in
   `/mnt/UDISK/wpe-browser/data/wpe-browser/content-filters`. Later starts load it instantly. WebKit maps
   the compiled list from disk, so it doesn't cost RAM per page. Older compiled versions are deleted.
+- **Per-site exceptions** (`AD_BLOCK_EXCEPTIONS`, SELECT → "Allow ads on <site>"): WebKit applies a
+  compiled list to the whole view, and the view shows one page. So when a page starts loading (the
+  main-frame navigation decision, before its first request), the browser removes the list from the view
+  for a site in the exceptions and adds it back for any other: no recompiling. The menu item saves the
+  change to `settings.conf` and reloads the page.
 - `package.sh` caches the lists in `build/adblock/`; `ADBLOCK_REFRESH=1` downloads fresh copies.
 
 ### History
@@ -806,6 +820,7 @@ app/
   osk.c / osk.h                       on-screen keyboard
   menu.c / menu.h                     SELECT menu, prompts, status strip
   downloads.c / downloads.h           download manager and wpe-tsp://downloads page
+  settings.c / settings.h             wpe-tsp://settings page, saving single values to settings.conf
   player.c / player.h                 video playback via the bundled mpv + yt-dlp
   ytdlp.c / ytdlp.h                   yt-dlp version check and safe update
   dmabuf.c / dmabuf.h                 zero-copy frames: DMA-buf → EGLImage → SDL texture

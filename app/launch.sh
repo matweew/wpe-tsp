@@ -4,16 +4,43 @@
 progdir="$(dirname "$(readlink -f "$0")")"
 cd "$progdir"
 
-# User settings live in settings.conf (kept across updates). The browser has its own default
-# for every setting that isn't there (HOME_URL has none). Variables
-# already set in the environment win (used by test tooling).
-[ -f "$progdir/settings.conf" ] && . "$progdir/settings.conf"
-for key in HOME_URL SEARCH_URL SCALE PAGE_MEMORY_LIMIT_MB POINTER_HIDE_SECONDS HISTORY_SIZE \
-           DOWNLOAD_DIR PLAY_YOUTUBE_IN_MPV USER_AGENT AD_BLOCK WEBGL START_PAGE \
-           KEYBOARD_LAYOUTS HW_VIDEO_DECODE; do
-    eval "value=\${$key-} env=\${WPE_TSP_$key-}"
-    [ -z "$env" ] && [ -n "$value" ] && export "WPE_TSP_$key=$value"
+# User settings live in settings.conf (kept across updates; the browser's Settings page edits it).
+# The browser has its own default for every setting that isn't there (HOME_URL has none).
+# Variables already set in the environment win (used by test tooling).
+keys="HOME_URL SEARCH_URL SCALE PAGE_MEMORY_LIMIT_MB POINTER_HIDE_SECONDS HISTORY_SIZE DOWNLOAD_DIR
+      PLAY_YOUTUBE_IN_MPV USER_AGENT AD_BLOCK AD_BLOCK_EXCEPTIONS WEBGL START_PAGE KEYBOARD_LAYOUTS
+      HW_VIDEO_DECODE"
+for key in $keys; do
+    eval "caller_$key=\${WPE_TSP_$key-}"
 done
+caller_gst_rank=${GST_PLUGIN_FEATURE_RANK:-}
+# Read settings.conf: at start, and again when the browser restarts itself to apply settings
+load_settings() {
+    for key in $keys; do
+        unset "$key"
+    done
+    [ -f "$progdir/settings.conf" ] && . "$progdir/settings.conf"
+    for key in $keys; do
+        eval "value=\${$key-} caller=\${caller_$key}"
+        if [ -n "$caller" ]; then
+            export "WPE_TSP_$key=$caller"
+        elif [ -n "$value" ]; then
+            export "WPE_TSP_$key=$value"
+        else
+            unset "WPE_TSP_$key"
+        fi
+    done
+    # H.264 on the Allwinner Cedar hardware decoder (FFmpeg's h264_cedar, which falls back to
+    # software by itself when the hardware can't be used): ranked above the software avdec_h264.
+    # HW_VIDEO_DECODE=0 hides it.
+    if [ "${WPE_TSP_HW_VIDEO_DECODE:-1}" = 0 ]; then
+        cedar_rank=avdec_h264_cedar:NONE
+    else
+        cedar_rank=avdec_h264_cedar:257 # PRIMARY (256) + 1
+    fi
+    export GST_PLUGIN_FEATURE_RANK="$cedar_rank,$caller_gst_rank"
+}
+load_settings
 
 # Model: TrimUI's MainUI names it ("Trimui Smart Pro", "Trimui Brick", "Trimui Brick Pro"); the
 # browser picks its default page scale from it, and on the Brick (no sticks) the d-pad moves the
@@ -70,15 +97,7 @@ export GST_REGISTRY="$XDG_CACHE_HOME/gstreamer-registry-$avcodec_id.bin"
 for old in "$XDG_CACHE_HOME"/gstreamer-registry*.bin; do
     [ "$old" != "$GST_REGISTRY" ] && rm -f "$old"
 done
-# H.264 on the Allwinner Cedar hardware decoder (FFmpeg's h264_cedar, which falls back to software
-# by itself when the hardware can't be used): ranked above the software avdec_h264. HW_VIDEO_DECODE=0
-# hides it.
-if [ "${WPE_TSP_HW_VIDEO_DECODE:-1}" = 0 ]; then
-    cedar_rank=avdec_h264_cedar:NONE
-else
-    cedar_rank=avdec_h264_cedar:257 # PRIMARY (256) + 1
-fi
-export GST_PLUGIN_FEATURE_RANK="$cedar_rank,${GST_PLUGIN_FEATURE_RANK:-}"
+# (GST_PLUGIN_FEATURE_RANK, the Cedar decoder's rank: load_settings above)
 
 # Rendering tuning for the PowerVR GE8300: 4x MSAA is costly on this GPU, Skia's
 # analytic anti-aliasing looks the same for page content.
@@ -106,6 +125,16 @@ fi
 # standard 1.0-2.0 GHz or performance at 2.0 GHz.)
 echo wpe-browser > /sys/power/wake_lock 2>/dev/null
 
-./bin/wpe-tsp "$@" > "$progdir/wpe-tsp.log" 2>&1
+: > "$progdir/wpe-tsp.log"
+# Exit code 75: the Settings page restarts the browser to apply settings read at start. It reopens
+# the page the settings were opened from.
+while :; do
+    ./bin/wpe-tsp "$@" >> "$progdir/wpe-tsp.log" 2>&1
+    [ $? = 75 ] || break
+    uri=$(cat /tmp/wpe-tsp-restart-uri 2>/dev/null)
+    rm -f /tmp/wpe-tsp-restart-uri
+    if [ -n "$uri" ]; then set -- "$uri"; else set --; fi
+    load_settings
+done
 
 echo wpe-browser > /sys/power/wake_unlock 2>/dev/null

@@ -36,6 +36,7 @@
 #include "downloads.h"
 #include "gamepad.h"
 #include "menu.h"
+#include "settings.h"
 #include "osk.h"
 #include "pages.h"
 #include "player.h"
@@ -140,6 +141,7 @@ typedef struct {
     char *video_page;           /* watch URL of the YouTube page last sent to mpv (canonical) */
     char *user_agent;           /* configured UA (USER_AGENT), NULL = WebKit's own (desktop) */
     gboolean ua_switched;       /* SELECT menu switched to the other site version (desktop <-> mobile) */
+    int exit_code;              /* RESTART_EXIT_CODE: launch.sh starts the browser again */
     double load_progress;       /* 0..1 while loading, 1 when done */
     WPEInputMethodContext *im_context;  /* context of the focused editable, if any */
     guint32 last_click_ms;
@@ -477,7 +479,9 @@ static void im_focus_in(WPEInputMethodContext *context)
     app.im_context = context;
     /* Only pop up for user clicks, not for fields the page autofocuses on load, and not while
      * a physical keyboard is in use. */
-    if (now_ms() - app.last_click_ms < 1000 && !app.hid_typing)
+    const char *uri = webkit_web_view_get_uri(app.web_view);
+    gboolean settings_field = uri && g_str_has_prefix(uri, SETTINGS_URI); /* START on a text setting */
+    if ((now_ms() - app.last_click_ms < 1000 || settings_field) && !app.hid_typing)
         show_form_keyboard();
 }
 
@@ -968,6 +972,8 @@ static char *history_page_html(void)
 }
 
 /* wpe-tsp:// pages: history and downloads */
+static const char *settings_previous_uri(void);
+
 static void on_app_scheme_request(WebKitURISchemeRequest *request, gpointer user_data)
 {
     (void)user_data;
@@ -985,6 +991,8 @@ static void on_app_scheme_request(WebKitURISchemeRequest *request, gpointer user
     char *html;
     if (g_str_has_prefix(uri, DOWNLOADS_URI)) {
         html = downloads_handle_page(uri);
+    } else if (g_str_has_prefix(uri, SETTINGS_URI)) {
+        html = settings_handle_page(uri, settings_previous_uri());
     } else {
         if (!strcmp(uri, HISTORY_CLEAR_URI)) {
             g_ptr_array_set_size(history, 0);
@@ -1253,6 +1261,9 @@ static void setup_embed_play(WebKitWebView *web_view)
 /* Ad/tracker blocking: WebKit content filter compiled from share/adblock/rules.json */
 /* (EasyList + EasyPrivacy domain rules, see scripts/make-adblock.py). Compiled once */
 /* per rules file into $XDG_DATA_HOME/wpe-browser/content-filters, then loaded fast. */
+/* Sites in settings.conf's AD_BLOCK_EXCEPTIONS (SELECT menu: "Allow ads on <site>") load */
+/* without it: the view has a single page, so the filter is removed from it while one of */
+/* them loads. */
 /* ------------------------------------------------------------------------- */
 
 static struct {
@@ -1260,14 +1271,108 @@ static struct {
     char *rules_path;
     char *identifier;       /* "adblock-<size>-<mtime>": a new rules file gets compiled again */
     gint64 started;
+    WebKitUserContentFilter *filter;  /* once loaded/compiled */
+    gboolean active;        /* the filter is in the view's content manager */
+    GPtrArray *exceptions;  /* of char *: sites (with their subdomains) loaded without blocking */
 } adblock;
+
+/* The site of an http(s) address for the exceptions: its host without "www.", or NULL */
+static char *adblock_site(const char *uri)
+{
+    if (!uri || (!g_str_has_prefix(uri, "http://") && !g_str_has_prefix(uri, "https://")))
+        return NULL;
+    GUri *parsed = g_uri_parse(uri, G_URI_FLAGS_NONE, NULL);
+    const char *host = parsed ? g_uri_get_host(parsed) : NULL;
+    char *site = host && *host ? g_ascii_strdown(g_str_has_prefix(host, "www.") ? host + 4 : host, -1) : NULL;
+    if (parsed)
+        g_uri_unref(parsed);
+    return site;
+}
+
+/* Index of the exception covering this site (the site itself or a parent domain), or -1 */
+static int adblock_exception(const char *site)
+{
+    size_t len = strlen(site);
+    for (guint i = 0; adblock.exceptions && i < adblock.exceptions->len; i++) {
+        const char *ex = g_ptr_array_index(adblock.exceptions, i);
+        size_t ex_len = strlen(ex);
+        if (!strcmp(site, ex) || (len > ex_len && site[len - ex_len - 1] == '.' && !strcmp(site + len - ex_len, ex)))
+            return (int)i;
+    }
+    return -1;
+}
+
+/* Block or not for a page about to load (before its first request) */
+static void adblock_update(const char *uri)
+{
+    if (!adblock.filter)
+        return;
+    char *site = adblock_site(uri);
+    gboolean on = !site || adblock_exception(site) < 0;
+    if (on != adblock.active) {
+        WebKitUserContentManager *manager = webkit_web_view_get_user_content_manager(app.web_view);
+        if (on)
+            webkit_user_content_manager_add_filter(manager, adblock.filter);
+        else
+            webkit_user_content_manager_remove_filter(manager, adblock.filter);
+        adblock.active = on;
+        fprintf(stderr, "[wpe-tsp] ad blocking %s for %s\n", on ? "on" : "off", site ? site : uri);
+    }
+    g_free(site);
+}
 
 static void adblock_apply(WebKitUserContentFilter *filter, const char *how)
 {
-    webkit_user_content_manager_add_filter(webkit_web_view_get_user_content_manager(app.web_view), filter);
-    fprintf(stderr, "[wpe-tsp] ad blocking on (%s in %.1f s)\n", how,
+    adblock.filter = filter;
+    fprintf(stderr, "[wpe-tsp] ad blocking ready (%s in %.1f s)\n", how,
             (g_get_monotonic_time() - adblock.started) / (double)G_USEC_PER_SEC);
-    webkit_user_content_filter_unref(filter);
+    adblock_update(webkit_web_view_get_uri(app.web_view));
+}
+
+/* settings.conf's AD_BLOCK_EXCEPTIONS */
+static void adblock_save_exceptions(void)
+{
+    g_ptr_array_add(adblock.exceptions, NULL);
+    char *value = g_strjoinv(" ", (char **)adblock.exceptions->pdata);
+    g_ptr_array_set_size(adblock.exceptions, adblock.exceptions->len - 1);
+    settings_save("AD_BLOCK_EXCEPTIONS", value);
+    g_free(value);
+}
+
+/* SELECT menu: allow ads on the current site (or the exception covering it: block them again) */
+static void toggle_site_ads(void)
+{
+    const char *uri = webkit_web_view_get_uri(app.web_view);
+    char *site = adblock_site(uri);
+    if (!site)
+        return;
+    int i = adblock_exception(site);
+    if (i >= 0)
+        while ((i = adblock_exception(site)) >= 0)
+            g_ptr_array_remove_index(adblock.exceptions, (guint)i);
+    else
+        g_ptr_array_add(adblock.exceptions, g_strdup(site));
+    adblock_save_exceptions();
+    adblock_update(uri);
+    webkit_web_view_reload(app.web_view);
+    g_free(site);
+}
+
+/* AD_BLOCK_EXCEPTIONS: sites separated by spaces or commas */
+static void adblock_set_exceptions(const char *value)
+{
+    if (!adblock.exceptions)
+        adblock.exceptions = g_ptr_array_new_with_free_func(g_free);
+    g_ptr_array_set_size(adblock.exceptions, 0);
+    char **sites = g_strsplit_set(value ? value : "", " ,\t", -1);
+    for (int i = 0; sites[i]; i++) {
+        char *site = g_ascii_strdown(g_str_has_prefix(sites[i], "www.") ? sites[i] + 4 : sites[i], -1);
+        if (*site && adblock_exception(site) < 0)
+            g_ptr_array_add(adblock.exceptions, site);
+        else
+            g_free(site);
+    }
+    g_strfreev(sites);
 }
 
 static void adblock_removed(GObject *object, GAsyncResult *result, gpointer user_data)
@@ -1456,6 +1561,12 @@ static gboolean on_decide_policy(WebKitWebView *web_view, WebKitPolicyDecision *
                                  WebKitPolicyDecisionType type, gpointer user_data)
 {
     (void)web_view; (void)user_data;
+    if (type == WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION) { /* the page (not a frame) is about to load */
+        WebKitNavigationAction *action =
+            webkit_navigation_policy_decision_get_navigation_action(WEBKIT_NAVIGATION_POLICY_DECISION(decision));
+        adblock_update(webkit_uri_request_get_uri(webkit_navigation_action_get_request(action)));
+        return FALSE;
+    }
     if (type != WEBKIT_POLICY_DECISION_TYPE_RESPONSE)
         return FALSE;
     WebKitResponsePolicyDecision *response_decision = WEBKIT_RESPONSE_POLICY_DECISION(decision);
@@ -1623,13 +1734,35 @@ static void toggle_desktop_site(void)
     webkit_web_view_reload(app.web_view);
 }
 
-enum { MENU_BACK, MENU_FORWARD, MENU_HOME, MENU_HISTORY, MENU_DOWNLOADS, MENU_DESKTOP_SITE, MENU_PORTRAIT, MENU_ADDRESS, MENU_ZOOM_IN, MENU_ZOOM_OUT, MENU_ZOOM_RESET, MENU_EXIT };
+enum { MENU_BACK, MENU_FORWARD, MENU_HOME, MENU_HISTORY, MENU_DOWNLOADS, MENU_DESKTOP_SITE, MENU_SITE_ADS, MENU_PORTRAIT, MENU_ADDRESS, MENU_ZOOM, MENU_SETTINGS, MENU_EXIT };
+static int menu_actions[MENU_EXIT + 1]; /* the action of each item of the open SELECT menu */
+
+static char *zoom_label(void)
+{
+    return g_strdup_printf("Zoom  \xe2\x97\x80 %d%% \xe2\x96\xb6", /* ◀ 100% ▶ */
+                           (int)(webkit_web_view_get_zoom_level(app.web_view) * 100 + 0.5));
+}
+
+/* Left/right on the zoom item: 10% steps, shown on the page behind the menu right away */
+static char *menu_adjusted(int index, int dir, void *user_data)
+{
+    (void)user_data;
+    if (menu_actions[index] != MENU_ZOOM)
+        return NULL;
+    double zoom = round(webkit_web_view_get_zoom_level(app.web_view) * 10 + dir) / 10;
+    webkit_web_view_set_zoom_level(app.web_view, CLAMP(zoom, 0.3, 3.0));
+    app.needs_present = TRUE;
+    return zoom_label();
+}
 
 static void menu_activated(int index, void *user_data)
 {
     (void)user_data;
-    double zoom = webkit_web_view_get_zoom_level(app.web_view);
-    switch (index) {
+    if (index < 0) {
+        app.needs_present = TRUE;
+        return;
+    }
+    switch (menu_actions[index]) {
     case MENU_BACK: webkit_web_view_go_back(app.web_view); break;
     case MENU_FORWARD: webkit_web_view_go_forward(app.web_view); break;
     case MENU_HOME:
@@ -1643,11 +1776,11 @@ static void menu_activated(int index, void *user_data)
     case MENU_HISTORY: webkit_web_view_load_uri(app.web_view, HISTORY_URI); break;
     case MENU_DOWNLOADS: open_downloads_menu(); return;
     case MENU_DESKTOP_SITE: toggle_desktop_site(); break;
+    case MENU_SITE_ADS: toggle_site_ads(); break;
     case MENU_PORTRAIT: set_portrait(!app.portrait); break;
     case MENU_ADDRESS: show_url_keyboard(); break;
-    case MENU_ZOOM_IN: webkit_web_view_set_zoom_level(app.web_view, MIN(zoom + 0.1, 3.0)); break;
-    case MENU_ZOOM_OUT: webkit_web_view_set_zoom_level(app.web_view, MAX(zoom - 0.1, 0.3)); break;
-    case MENU_ZOOM_RESET: webkit_web_view_set_zoom_level(app.web_view, 1.0); break;
+    case MENU_ZOOM: webkit_web_view_set_zoom_level(app.web_view, 1.0); break; /* A: back to 100% */
+    case MENU_SETTINGS: webkit_web_view_load_uri(app.web_view, SETTINGS_URI); break;
     case MENU_EXIT: g_main_loop_quit(app.loop); break;
     }
     app.needs_present = TRUE;
@@ -1747,18 +1880,32 @@ static gboolean on_context_menu(WebKitWebView *web_view, WebKitContextMenu *menu
 
 static void open_menu(void)
 {
-    const char *items[] = {
-        "Back", "Forward", "Home", "History", "Downloads",
-        showing_desktop_site() ? "Request mobile site" : "Request desktop site",
-        app.portrait ? "Landscape mode" : "Portrait mode",
-        "Address bar", "Zoom in", "Zoom out", "Reset zoom", "Exit", NULL
-    };
     const char *title = webkit_web_view_get_title(app.web_view);
     const char *uri = webkit_web_view_get_uri(app.web_view);
-    char *zoom_title = g_strdup_printf("%s  (%d%%)", title && *title ? title : "WPE Browser",
-                                       (int)(webkit_web_view_get_zoom_level(app.web_view) * 100 + 0.5));
-    menu_open(zoom_title, uri, items, menu_activated, NULL);
-    g_free(zoom_title);
+    char *site = adblock.filter ? adblock_site(uri) : NULL;
+    char *ads = site ? g_strdup_printf(adblock_exception(site) >= 0 ? "Block ads on %s" : "Allow ads on %s", site) : NULL;
+    char *zoom = zoom_label();
+    const char *items[MENU_EXIT + 2];
+    int n = 0;
+#define ITEM(action, label) (menu_actions[n] = (action), items[n++] = (label))
+    ITEM(MENU_BACK, "Back");
+    ITEM(MENU_FORWARD, "Forward");
+    ITEM(MENU_HOME, "Home");
+    ITEM(MENU_HISTORY, "History");
+    ITEM(MENU_DOWNLOADS, "Downloads");
+    ITEM(MENU_DESKTOP_SITE, showing_desktop_site() ? "Request mobile site" : "Request desktop site");
+    if (ads) /* only on web pages, with ad blocking on */
+        ITEM(MENU_SITE_ADS, ads);
+    ITEM(MENU_PORTRAIT, app.portrait ? "Landscape mode" : "Portrait mode");
+    ITEM(MENU_ADDRESS, "Address bar");
+    ITEM(MENU_ZOOM, zoom);
+    ITEM(MENU_SETTINGS, "Settings");
+    ITEM(MENU_EXIT, "Exit");
+#undef ITEM
+    items[n] = NULL;
+    menu_open(title && *title ? title : "WPE Browser", uri, items, menu_activated, NULL);
+    menu_set_adjust(menu_adjusted);
+    g_free(zoom); g_free(ads); g_free(site);
     app.needs_present = TRUE;
 }
 
@@ -2392,6 +2539,87 @@ static gboolean on_unix_signal(gpointer user_data)
 
 /* ------------------------------------------------------------------------- */
 
+/* ------------------------------------------------------------------------- */
+/* Settings page (settings.c): what applies at once; the rest at the next start  */
+/* ------------------------------------------------------------------------- */
+
+#define RESTART_EXIT_CODE 75            /* launch.sh: start again, reading settings.conf anew */
+#define RESTART_URI_FILE "/tmp/wpe-tsp-restart-uri"  /* the page to reopen after a restart */
+
+static gboolean settings_applied(const char *key, const char *value)
+{
+    static char *home_url, *search_url;
+    if (!strcmp(key, "HOME_URL")) {
+        g_free(home_url);
+        app.home_url = home_url = *value ? g_strdup(value) : NULL;
+    } else if (!strcmp(key, "SEARCH_URL")) {
+        g_free(search_url);
+        app.search_url = search_url = g_strdup(*value ? value : SEARCH_URL);
+        char *engine = search_engine_name(app.search_url);
+        osk_set_search_name(engine);
+        g_free(engine);
+    } else if (!strcmp(key, "START_PAGE")) {
+        /* used at the next start anyway */
+    } else if (!strcmp(key, "POINTER_HIDE_SECONDS")) {
+        app.pointer_hide_ms = 1000 * (*value ? (guint32)g_ascii_strtoull(value, NULL, 10) : DEFAULT_POINTER_HIDE_SECONDS);
+    } else if (!strcmp(key, "HISTORY_SIZE")) {
+        history_size = *value ? (guint)MIN(g_ascii_strtoull(value, NULL, 10), 60) : DEFAULT_HISTORY_SIZE;
+        if (history->len > history_size) {
+            g_ptr_array_set_size(history, history_size);
+            history_save();
+        }
+    } else if (!strcmp(key, "USER_AGENT")) {
+        g_free(app.user_agent);
+        app.user_agent = !*value || !strcmp(value, "mobile") ? g_strdup(MOBILE_USER_AGENT)
+                       : strcmp(value, "desktop") ? g_strdup(value) : NULL;
+        app.ua_switched = FALSE;
+        webkit_settings_set_user_agent(webkit_web_view_get_settings(app.web_view), app.user_agent);
+    } else if (!strcmp(key, "WEBGL")) {
+        webkit_settings_set_enable_webgl(webkit_web_view_get_settings(app.web_view), strcmp(value, "0") != 0);
+    } else if (!strcmp(key, "AD_BLOCK_EXCEPTIONS")) {
+        if (adblock.exceptions) /* ad blocking on */
+            adblock_set_exceptions(value);
+    } else
+        return FALSE; /* SCALE, AD_BLOCK, PLAY_YOUTUBE_IN_MPV, HW_VIDEO_DECODE, KEYBOARD_LAYOUTS, ... */
+    return TRUE;
+}
+
+/* The page the settings were opened from: the one before them in the history */
+static const char *settings_previous_uri(void)
+{
+    WebKitBackForwardListItem *back = webkit_back_forward_list_get_back_item(webkit_web_view_get_back_forward_list(app.web_view));
+    return back ? webkit_back_forward_list_item_get_uri(back) : NULL;
+}
+
+/* The settings page's changes (settings.c), answered with its updated list. Only from that page:
+ * the handler exists in every page. */
+static gboolean on_settings_message(WebKitUserContentManager *manager, JSCValue *value, WebKitScriptMessageReply *reply,
+                                    gpointer user_data)
+{
+    (void)manager; (void)user_data;
+    const char *page = webkit_web_view_get_uri(app.web_view);
+    if (!page || !g_str_has_prefix(page, SETTINGS_URI) || !jsc_value_is_string(value))
+        return FALSE;
+    char *uri = jsc_value_to_string(value);
+    char *html = settings_handle_message(uri, settings_previous_uri());
+    JSCValue *result = jsc_value_new_string(jsc_value_get_context(value), html);
+    webkit_script_message_reply_return_value(reply, result);
+    g_object_unref(result);
+    g_free(html);
+    g_free(uri);
+    return TRUE;
+}
+
+/* Restart: launch.sh starts the browser again with the page the settings were opened from */
+static void settings_restart(void)
+{
+    const char *uri = settings_previous_uri();
+    if (uri)
+        g_file_set_contents(RESTART_URI_FILE, uri, -1, NULL);
+    app.exit_code = RESTART_EXIT_CODE;
+    g_main_loop_quit(app.loop);
+}
+
 static int create_display(void)
 {
     SDL_DisplayMode mode;
@@ -2623,6 +2851,9 @@ int main(int argc, char **argv)
     g_signal_connect(app.web_view, "load-changed", G_CALLBACK(on_load_changed), NULL);
     g_signal_connect(app.web_view, "notify::title", G_CALLBACK(on_title_changed), NULL);
     g_signal_connect(app.web_view, "decide-policy", G_CALLBACK(on_decide_policy), NULL);
+    WebKitUserContentManager *content_manager = webkit_web_view_get_user_content_manager(app.web_view);
+    webkit_user_content_manager_register_script_message_handler_with_reply(content_manager, "wpeTspSettings", NULL);
+    g_signal_connect(content_manager, "script-message-with-reply-received::wpeTspSettings", G_CALLBACK(on_settings_message), NULL);
     g_signal_connect(app.web_view, "context-menu", G_CALLBACK(on_context_menu), NULL);
     g_signal_connect(app.web_view, "create", G_CALLBACK(on_create), NULL);
     g_signal_connect(app.web_view, "notify::uri", G_CALLBACK(on_uri_changed), NULL);
@@ -2630,12 +2861,16 @@ int main(int argc, char **argv)
         setup_embed_play(app.web_view);
     else if (g_strcmp0(g_getenv("WPE_TSP_HW_VIDEO_DECODE"), "0")) /* default on, see launch.sh */
         setup_youtube_h264(app.web_view);
+    char *settings_path = g_build_filename(app_data_dir, "..", "settings.conf", NULL);
+    settings_init(settings_path, settings_applied, settings_restart);
+    g_free(settings_path);
     /* AD_BLOCK=1 (default): share/adblock/rules.json; WPE_TSP_ADBLOCK_RULES overrides the file */
     const char *adblock_env = g_getenv("WPE_TSP_AD_BLOCK");
     if (!adblock_env || strcmp(adblock_env, "0")) {
         const char *rules_env = g_getenv("WPE_TSP_ADBLOCK_RULES");
         char *rules = rules_env && *rules_env ? g_strdup(rules_env)
                                               : g_build_filename(app_data_dir, "adblock", "rules.json", NULL);
+        adblock_set_exceptions(g_getenv("WPE_TSP_AD_BLOCK_EXCEPTIONS"));
         setup_adblock(rules);
         g_free(rules);
     }
@@ -2671,5 +2906,5 @@ int main(int argc, char **argv)
     if (app.joystick)
         SDL_JoystickClose(app.joystick);
     SDL_Quit();
-    return 0;
+    return app.exit_code;
 }

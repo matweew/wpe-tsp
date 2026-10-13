@@ -35,11 +35,13 @@ static struct {
     int selected;
     int first;      /* first item shown when they don't all fit (scrolled to keep the selection visible) */
     MenuActivate activate;
+    MenuAdjust adjust;
     void *user_data;
 
     int hold_dir;   /* -1 up, 1 down, 0 none */
+    int hold_adjust; /* -1 left, 1 right, 0 none (repeats like hold_dir) */
     Uint32 hold_since, last_repeat;
-    int axis_dir;
+    int axis_dir, axis_adjust;
 } menu;
 
 static int S(int px)
@@ -102,9 +104,15 @@ void menu_open(const char *title, const char *subtitle, const char *const *items
     menu.selected = 0;
     menu.first = 0;
     menu.activate = activate;
+    menu.adjust = NULL;
     menu.user_data = user_data;
-    menu.hold_dir = 0;
+    menu.hold_dir = menu.hold_adjust = 0;
     menu.visible = true;
+}
+
+void menu_set_adjust(MenuAdjust adjust)
+{
+    menu.adjust = adjust;
 }
 
 void menu_close(void)
@@ -126,6 +134,24 @@ static void start_hold(int dir)
 {
     move(dir);
     menu.hold_dir = dir;
+    menu.hold_adjust = 0;
+    menu.hold_since = menu.last_repeat = SDL_GetTicks();
+}
+
+static void adjust(int dir)
+{
+    char *label = menu.adjust ? menu.adjust(menu.selected, dir, menu.user_data) : NULL;
+    if (label) {
+        g_free(menu.items[menu.selected]);
+        menu.items[menu.selected] = label;
+    }
+}
+
+static void start_adjust(int dir)
+{
+    adjust(dir);
+    menu.hold_adjust = dir;
+    menu.hold_dir = 0;
     menu.hold_since = menu.last_repeat = SDL_GetTicks();
 }
 
@@ -171,8 +197,12 @@ bool menu_handle_event(const SDL_Event *ev)
             start_hold(-1);
         else if (ev->jhat.value & SDL_HAT_DOWN)
             start_hold(1);
+        else if (ev->jhat.value & SDL_HAT_LEFT)
+            start_adjust(-1);
+        else if (ev->jhat.value & SDL_HAT_RIGHT)
+            start_adjust(1);
         else
-            menu.hold_dir = 0;
+            menu.hold_dir = menu.hold_adjust = 0;
         return true;
     case SDL_JOYAXISMOTION:
         if (ev->jaxis.axis == AXIS_LY) {
@@ -184,6 +214,15 @@ bool menu_handle_event(const SDL_Event *ev)
                 else
                     menu.hold_dir = 0;
             }
+        } else if (ev->jaxis.axis == AXIS_LX) {
+            int dir = ev->jaxis.value > AXIS_THRESHOLD ? 1 : ev->jaxis.value < -AXIS_THRESHOLD ? -1 : 0;
+            if (dir != menu.axis_adjust) {
+                menu.axis_adjust = dir;
+                if (dir)
+                    start_adjust(dir);
+                else
+                    menu.hold_adjust = 0;
+            }
         }
         return true;
     }
@@ -192,13 +231,16 @@ bool menu_handle_event(const SDL_Event *ev)
 
 bool menu_tick(void)
 {
-    if (!menu.visible || !menu.hold_dir)
+    if (!menu.visible || (!menu.hold_dir && !menu.hold_adjust))
         return false;
     Uint32 now = SDL_GetTicks();
     if (now - menu.hold_since < REPEAT_DELAY_MS || now - menu.last_repeat < REPEAT_RATE_MS)
         return false;
     menu.last_repeat = now;
-    move(menu.hold_dir);
+    if (menu.hold_dir)
+        move(menu.hold_dir);
+    else
+        adjust(menu.hold_adjust);
     return true;
 }
 
