@@ -13,6 +13,11 @@ RUN dpkg --add-architecture arm64 && apt-get update && apt-get install -y --no-i
         gstreamer1.0-plugins-base:arm64 gstreamer1.0-plugins-good:arm64 gstreamer1.0-plugins-bad:arm64 \
         gstreamer1.0-libav:arm64 gstreamer1.0-alsa:arm64 gstreamer1.0-gl:arm64 \
     && rm -rf /var/lib/apt/lists/*
+# What scripts/licenses.py needs from this stage: which package owns each file, package
+# versions/sources and their copyright files (the builder's dpkg doesn't know these packages)
+RUN mkdir -p /opt/dpkg/doc && cp /var/lib/dpkg/status /var/lib/dpkg/info/*.list /opt/dpkg/ \
+    && for d in /usr/share/doc/*; do [ -f "$d/copyright" ] || continue; \
+           mkdir -p "/opt/dpkg/doc/${d##*/}" && cp -L "$d/copyright" "/opt/dpkg/doc/${d##*/}/"; done
 
 FROM debian:bookworm
 
@@ -85,9 +90,12 @@ RUN apt-get update && cd /tmp && apt-get download shared-mime-info && dpkg -x sh
     && cp smi/usr/share/mime/packages/freedesktop.org.xml mime/packages/ \
     && smi/usr/bin/update-mime-database mime \
     && cp mime/mime.cache /opt/runtime-data/usr/share/mime/ \
+    && mkdir -p /opt/runtime-data/usr/share/doc/shared-mime-info \
+    && cp smi/usr/share/doc/shared-mime-info/copyright /opt/runtime-data/usr/share/doc/shared-mime-info/ \
     && rm -rf /tmp/smi /tmp/mime /tmp/*.deb /var/lib/apt/lists/*
 
 # GStreamer from the stage above: arm64 libraries, plugins, headers (pkg-config files included)
 COPY --from=gstreamer /usr/lib/aarch64-linux-gnu /usr/lib/aarch64-linux-gnu
 COPY --from=gstreamer /usr/include/gstreamer-1.0 /usr/include/gstreamer-1.0
 COPY --from=gstreamer /usr/include/aarch64-linux-gnu /usr/include/aarch64-linux-gnu
+COPY --from=gstreamer /opt/dpkg /opt/gstreamer-dpkg

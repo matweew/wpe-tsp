@@ -98,10 +98,16 @@ chmod +x "$OUT/launch.sh"
 ELFS=("$OUT/bin/wpe-tsp" "$OUT"/libexec/wpe-webkit-2.0/* "$OUT"/lib/*.so.* "$OUT/lib/gio/modules/libgiognutls.so"
       "$OUT"/lib/gstreamer-1.0/*.so)
 while IFS= read -r -d '' f; do ELFS+=("$f"); done < <(find "$OUT/lib/wpe-webkit-2.0" -name '*.so' -print0 2>/dev/null)
-/work/scripts/bundle-libs.sh "$DEVICE_PREFIX" "$OUT" "${ELFS[@]}"
+rm -f /work/build/bundled-libs.tsv
+BUNDLE_MANIFEST=/work/build/bundled-libs.tsv /work/scripts/bundle-libs.sh "$DEVICE_PREFIX" "$OUT" "${ELFS[@]}"
 
 aarch64-linux-gnu-strip --strip-unneeded "$OUT/bin/wpe-tsp" "$OUT"/libexec/wpe-webkit-2.0/* "$OUT"/lib/*.so* \
     "$OUT"/lib/gstreamer-1.0/*.so 2>/dev/null || true
+
+# --- licenses: ours, an overview, and every third-party license text (scripts/licenses.py)
+mkdir -p "$OUT/licenses"
+cp /work/LICENSE /work/licenses/README.md "$OUT/licenses/"
+python3 /work/scripts/licenses.py "$OUT" /work/build/bundled-libs.tsv
 
 # exFAT can't store symlinks: fail loudly if any slipped in.
 if find "$OUT" -type l | grep -q .; then

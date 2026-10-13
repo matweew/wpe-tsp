@@ -6,11 +6,14 @@
 # Usage: bundle-libs.sh <device-prefix> <out-dir> <elf>...
 #   device-prefix: absolute install path on the device (e.g. /mnt/SDCARD/Apps/WPE)
 #   out-dir:       local staging dir that mirrors device-prefix
+# BUNDLE_MANIFEST (optional): file to append "<soname><TAB><source path>" lines to, one per
+# bundled library (scripts/licenses.py finds each library's origin and license from it)
 set -euo pipefail
 
 DEVICE_PREFIX=$1; OUT=$2; shift 2
 LIBDIR="$OUT/lib"
 mkdir -p "$LIBDIR"
+MANIFEST=${BUNDLE_MANIFEST:-/dev/null}
 
 # build/ffmpeg first: the minimal FFmpeg (scripts/build-ffmpeg.sh) replaces Debian's for gst-libav.
 # runtime/mpv/lib last: only for what nothing else has, libcedarc (its h264_cedar decoder links it)
@@ -46,15 +49,18 @@ while [ ${#queue[@]} -gt 0 ]; do
         if [ "$src" != "$(readlink -f "$LIBDIR/$need" 2>/dev/null)" ]; then
             cp -f "$src" "$LIBDIR/$need"
         fi
+        printf '%s\t%s\n' "$need" "$src" >> "$MANIFEST"
         queue+=("$LIBDIR/$need")
     done
 done
 
 cp -f "$(readlink -f /lib/aarch64-linux-gnu/ld-linux-aarch64.so.1)" "$LIBDIR/ld-linux-aarch64.so.1"
+printf '%s\t%s\n' ld-linux-aarch64.so.1 "$(readlink -f /lib/aarch64-linux-gnu/ld-linux-aarch64.so.1)" >> "$MANIFEST"
 # Always ship the full glibc set: device blobs (PowerVR) link libdl/libpthread/librt/libm,
 # and mixing the device's glibc 2.33 pieces with our 2.36 loader breaks (GLIBC_PRIVATE ABI).
 for g in libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1 libutil.so.1 libresolv.so.2 libanl.so.1; do
     cp -f "$(readlink -f /lib/aarch64-linux-gnu/$g)" "$LIBDIR/$g"
+    printf '%s\t%s\n' "$g" "$(readlink -f /lib/aarch64-linux-gnu/$g)" >> "$MANIFEST"
 done
 aarch64-linux-gnu-strip --strip-unneeded "$LIBDIR"/*.so* 2>/dev/null || true
 
