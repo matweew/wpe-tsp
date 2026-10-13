@@ -12,7 +12,7 @@
 #define MAX_ITEMS 16
 /* Sizes in Smart Pro pixels, multiplied by the device's UI scale (S()) */
 #define ITEM_H 52
-#define ITEM_MIN_H 44      /* rows shrink to this before the list scrolls */
+#define ITEM_MIN_H 42      /* rows shrink to this before the list scrolls */
 #define HEADER_H 76
 #define MENU_W 560
 #define SCREEN_MARGIN 12   /* the menu keeps this far from the screen edges */
@@ -274,7 +274,7 @@ void menu_draw(void)
     SDL_RenderFillRect(menu.renderer, NULL);
     SDL_SetRenderDrawBlendMode(menu.renderer, SDL_BLENDMODE_NONE);
 
-    /* All items if they fit, with rows down to ITEM_MIN_H (the Smart Pro's 13-item menu); else
+    /* All items if they fit, with rows down to ITEM_MIN_H (the Smart Pro's 14-item menu); else
      * (the Brick at its UI scale) the list scrolls to keep the selected one visible, with a bar */
     int header_h = S(HEADER_H), margin = S(SCREEN_MARGIN);
     int menu_w = MIN(S(MENU_W), menu.screen_w - 2 * margin);

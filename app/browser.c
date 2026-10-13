@@ -35,6 +35,7 @@
 #include "dmabuf.h"
 #include "downloads.h"
 #include "gamepad.h"
+#include "favorites.h"
 #include "menu.h"
 #include "settings.h"
 #include "osk.h"
@@ -991,6 +992,8 @@ static void on_app_scheme_request(WebKitURISchemeRequest *request, gpointer user
     char *html;
     if (g_str_has_prefix(uri, DOWNLOADS_URI)) {
         html = downloads_handle_page(uri);
+    } else if (g_str_has_prefix(uri, FAVORITES_URI)) {
+        html = favorites_handle_page(uri);
     } else if (g_str_has_prefix(uri, SETTINGS_URI)) {
         html = settings_handle_page(uri, settings_previous_uri());
     } else {
@@ -1732,7 +1735,7 @@ static void toggle_desktop_site(void)
     webkit_web_view_reload(app.web_view);
 }
 
-enum { MENU_BACK, MENU_FORWARD, MENU_HOME, MENU_HISTORY, MENU_DOWNLOADS, MENU_DESKTOP_SITE, MENU_SITE_ADS, MENU_PORTRAIT, MENU_ADDRESS, MENU_ZOOM, MENU_SETTINGS, MENU_EXIT };
+enum { MENU_BACK, MENU_FORWARD, MENU_HOME, MENU_FAVORITES, MENU_FAVORITE, MENU_HISTORY, MENU_DOWNLOADS, MENU_DESKTOP_SITE, MENU_SITE_ADS, MENU_PORTRAIT, MENU_ADDRESS, MENU_ZOOM, MENU_SETTINGS, MENU_EXIT };
 static int menu_actions[MENU_EXIT + 1]; /* the action of each item of the open SELECT menu */
 
 static char *zoom_label(void)
@@ -1770,6 +1773,10 @@ static void menu_activated(int index, void *user_data)
             webkit_web_view_load_uri(app.web_view, "about:blank");
             show_url_keyboard();
         }
+        break;
+    case MENU_FAVORITES: webkit_web_view_load_uri(app.web_view, FAVORITES_URI); break;
+    case MENU_FAVORITE:
+        favorites_toggle(webkit_web_view_get_uri(app.web_view), webkit_web_view_get_title(app.web_view));
         break;
     case MENU_HISTORY: webkit_web_view_load_uri(app.web_view, HISTORY_URI); break;
     case MENU_DOWNLOADS: open_downloads_menu(); return;
@@ -1889,13 +1896,16 @@ static void open_menu(void)
     ITEM(MENU_BACK, "Back");
     ITEM(MENU_FORWARD, "Forward");
     ITEM(MENU_HOME, "Home");
+    ITEM(MENU_ADDRESS, "Address bar");
     ITEM(MENU_HISTORY, "History");
+    ITEM(MENU_FAVORITES, "Favorites");
+    if (uri && (g_str_has_prefix(uri, "http://") || g_str_has_prefix(uri, "https://")))
+        ITEM(MENU_FAVORITE, favorites_contains(uri) ? "Remove from Favorites" : "Add to Favorites");
     ITEM(MENU_DOWNLOADS, "Downloads");
     ITEM(MENU_DESKTOP_SITE, showing_desktop_site() ? "Request mobile site" : "Request desktop site");
     if (ads) /* only on web pages, with ad blocking on */
         ITEM(MENU_SITE_ADS, ads);
     ITEM(MENU_PORTRAIT, app.portrait ? "Landscape mode" : "Portrait mode");
-    ITEM(MENU_ADDRESS, "Address bar");
     ITEM(MENU_ZOOM, zoom);
     ITEM(MENU_SETTINGS, "Settings");
     ITEM(MENU_EXIT, "Exit");
@@ -2686,6 +2696,7 @@ int main(int argc, char **argv)
     const char *history_env = g_getenv("WPE_TSP_HISTORY_SIZE");
     history_size = history_env ? (guint)MIN(g_ascii_strtoull(history_env, NULL, 10), 60) : DEFAULT_HISTORY_SIZE;
     history_load();
+    favorites_init();
 
     /* START_PAGE: "home" (default), "last" (newest History entry; home if there is none) or
      * "address" (empty page with the address bar open). Without a page to open (no HOME_URL),

@@ -41,8 +41,8 @@ you drive it with the gamepad, a USB keyboard and mouse, or the on-screen keyboa
   videos.
 - ⬇️ **Downloads**: save files, links and page media to the SD card; open them from the Downloads page
   (videos and audio play in mpv or in the page, pages, images and PDFs open in the browser) or delete them.
-- 🕘 **History, home page, search**: start on your home page, the last page or the address bar; anything
-  that isn't a URL is searched.
+- 🕘 **Favorites, history, home page, search**: save pages to Favorites; start on your home page, the last
+  page or the address bar; anything that isn't a URL is searched.
 - 🍪 **Stays logged in**: cookies and site storage are kept across restarts.
 - 📦 **Self-contained**: one folder with everything (its own libraries, mpv, yt-dlp); nothing else to
   install.
@@ -83,7 +83,7 @@ To **update**, unpack a newer release over the old folder; `settings.conf` keeps
 | X | Reload |
 | Y | Right click (context menus) |
 | START | Enter |
-| SELECT | Menu: Back, Forward, Home, History, Downloads, desktop/mobile site, allow/block ads on this site, Portrait/Landscape mode, Address bar, Zoom (d-pad ◀ ▶ changes it, A resets to 100%), Settings, Exit |
+| SELECT | Menu: Back, Forward, Home, Address bar, History, Favorites, Add to/Remove from Favorites, Downloads, desktop/mobile site, allow/block ads on this site, Portrait/Landscape mode, Zoom (d-pad ◀ ▶ changes it, A resets to 100%), Settings, Exit |
 
 **Brick** (no sticks): the d-pad moves the pointer (slowly at first, faster after ~0.7 s held), **L1 / R1**
 scroll up/down while held, **L2 / R2** are page up/down, and the **F1 / F2** keys go back/forward. The FN
@@ -608,6 +608,13 @@ SELECT → History opens a page served by the app at `wpe-tsp://history`:
 - the list is stored in `/mnt/UDISK/wpe-browser/data/wpe-browser/history.txt` (`uri<TAB>time<TAB>title`
   per line), since WPE itself only keeps the session's back/forward list.
 
+### Favorites
+
+SELECT → Add to Favorites saves the current page (Remove from Favorites on a saved one), and SELECT →
+Favorites opens the page `wpe-tsp://favorites` (`app/favorites.c`): the saved pages, newest first, with
+title and site. START opens one; right selects its Delete button. They are stored in
+`/mnt/UDISK/wpe-browser/data/wpe-browser/favorites.txt` (`uri<TAB>title` per line).
+
 ### Downloads
 
 Downloads (`app/downloads.c`) are saved to `DOWNLOAD_DIR`. WebKit streams them straight to the SD
@@ -823,6 +830,7 @@ app/
   menu.c / menu.h                     SELECT menu, prompts, status strip
   downloads.c / downloads.h           download manager and wpe-tsp://downloads page
   settings.c / settings.h             wpe-tsp://settings page, saving single values to settings.conf
+  favorites.c / favorites.h           favorites and the wpe-tsp://favorites page
   player.c / player.h                 video playback via the bundled mpv + yt-dlp
   ytdlp.c / ytdlp.h                   yt-dlp version check and safe update
   dmabuf.c / dmabuf.h                 zero-copy frames: DMA-buf → EGLImage → SDL texture

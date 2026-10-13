@@ -21,7 +21,7 @@ export PKG_CONFIG_PATH=$PCDIR
 
 # --- app
 aarch64-linux-gnu-gcc-12 -O2 -Wall -Wextra -mcpu=cortex-a53 \
-    -o "$OUT/bin/wpe-tsp" /work/app/browser.c /work/app/osk.c /work/app/menu.c /work/app/downloads.c /work/app/player.c /work/app/dmabuf.c /work/app/ytdlp.c /work/app/hid.c /work/app/settings.c \
+    -o "$OUT/bin/wpe-tsp" /work/app/browser.c /work/app/osk.c /work/app/menu.c /work/app/downloads.c /work/app/player.c /work/app/dmabuf.c /work/app/ytdlp.c /work/app/hid.c /work/app/settings.c /work/app/favorites.c \
     -I/opt/SDL2-2.26.1/include -I/work/sysroot-device/include -D_REENTRANT \
     $(pkg-config --cflags --libs wpe-webkit-2.0 wpe-platform-2.0) \
     -L/work/sysroot-device/lib -lSDL2 -lSDL2_ttf -lxkbcommon -lm -ldl \
