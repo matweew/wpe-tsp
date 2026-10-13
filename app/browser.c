@@ -1263,7 +1263,7 @@ static void setup_embed_play(WebKitWebView *web_view)
 /* per rules file into $XDG_DATA_HOME/wpe-browser/content-filters, then loaded fast. */
 /* Sites in settings.conf's AD_BLOCK_EXCEPTIONS (SELECT menu: "Allow ads on <site>") load */
 /* without it: the view has a single page, so the filter is removed from it while one of */
-/* them loads. */
+/* them is shown (switched when the page's response arrives, before its content loads). */
 /* ------------------------------------------------------------------------- */
 
 static struct {
@@ -1302,7 +1302,7 @@ static int adblock_exception(const char *site)
     return -1;
 }
 
-/* Block or not for a page about to load (before its first request) */
+/* Block or not for the page about to load (its response arrived; its content isn't loaded yet) */
 static void adblock_update(const char *uri)
 {
     if (!adblock.filter)
@@ -1561,18 +1561,16 @@ static gboolean on_decide_policy(WebKitWebView *web_view, WebKitPolicyDecision *
                                  WebKitPolicyDecisionType type, gpointer user_data)
 {
     (void)web_view; (void)user_data;
-    if (type == WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION) { /* the page (not a frame) is about to load */
-        WebKitNavigationAction *action =
-            webkit_navigation_policy_decision_get_navigation_action(WEBKIT_NAVIGATION_POLICY_DECISION(decision));
-        adblock_update(webkit_uri_request_get_uri(webkit_navigation_action_get_request(action)));
-        return FALSE;
-    }
     if (type != WEBKIT_POLICY_DECISION_TYPE_RESPONSE)
         return FALSE;
     WebKitResponsePolicyDecision *response_decision = WEBKIT_RESPONSE_POLICY_DECISION(decision);
     WebKitURIResponse *response = webkit_response_policy_decision_get_response(response_decision);
     if (!webkit_response_policy_decision_is_main_frame_main_resource(response_decision))
         return FALSE;
+    /* Ad blocking for the page's site (after redirects). Not at the navigation decision: frames
+     * (ad slots start as about:blank) get those too, and nothing tells them apart. The page waits
+     * for this decision before it parses, and the filter change reaches it first. */
+    adblock_update(webkit_uri_response_get_uri(response));
     if (webkit_response_policy_decision_is_mime_type_supported(response_decision) && !response_is_attachment(response))
         return FALSE;
     if (app.download_prompt) { /* already asking about another one */

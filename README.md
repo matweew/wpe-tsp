@@ -590,10 +590,12 @@ Safari content blockers), so blocked requests are never made:
   `/mnt/UDISK/wpe-browser/data/wpe-browser/content-filters`. Later starts load it instantly. WebKit maps
   the compiled list from disk, so it doesn't cost RAM per page. Older compiled versions are deleted.
 - **Per-site exceptions** (`AD_BLOCK_EXCEPTIONS`, SELECT → "Allow ads on <site>"): WebKit applies a
-  compiled list to the whole view, and the view shows one page. So when a page starts loading (the
-  main-frame navigation decision, before its first request), the browser removes the list from the view
-  for a site in the exceptions and adds it back for any other: no recompiling. The menu item saves the
-  change to `settings.conf` and reloads the page.
+  compiled list to the whole view, and the view shows one page. So when a page's response arrives (the
+  main-frame response decision: the page waits for it before parsing, so before any of its content
+  loads), the browser removes the list from the view for a site in the exceptions and adds it back for
+  any other: no recompiling. Not at the navigation decision: iframes (ad slots start as `about:blank`)
+  get those too, with nothing to tell them from the page. The menu item saves the change to
+  `settings.conf` and reloads the page.
 - `package.sh` caches the lists in `build/adblock/`; `ADBLOCK_REFRESH=1` downloads fresh copies.
 
 ### History
