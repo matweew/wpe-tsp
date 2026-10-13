@@ -7,7 +7,7 @@ of scripts/bundle-libs.sh and the GStreamer stage's dpkg data in /opt/gstreamer-
 unknown origin stops the build, so anything newly bundled gets its license added here.
 
 One file instead of a folder of texts: the SD card is exFAT with 128 KB clusters, where each
-small file costs 128 KB. Identical texts are written once. Downloaded texts are cached in
+small file costs 128 KB. Identical texts (ignoring whitespace) are written once. Downloaded texts are cached in
 build/licenses. Runs inside wpe-tsp-builder, from scripts/package.sh.
 
 Usage: licenses.py <out-dir> <bundle-manifest>
@@ -174,7 +174,7 @@ sections = []
 def text(label, body, dedupe=True):
     """A license text, or a pointer to the identical one written earlier."""
     common.update(n.rstrip('.') for n in re.findall(r'/usr/share/common-licenses/([A-Za-z0-9.+_-]+)', body))
-    h = hashlib.sha256(body.strip().encode()).hexdigest()
+    h = hashlib.sha256(''.join(body.split()).encode()).hexdigest()  # copies differ in whitespace/wrapping
     if dedupe and h in seen:
         return f'---- {label}: the same text as "{seen[h]}" above\n'
     seen[h] = label
