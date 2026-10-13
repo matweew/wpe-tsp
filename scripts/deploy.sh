@@ -1,8 +1,9 @@
 #!/bin/sh
 # Copy dist/WPE to the device, sending only files whose checksum differs (one tar stream over
 # ssh; the device has no rsync). Stops the browser first if anything changed, since running
-# binaries can't be overwritten. settings.conf and bin/yt-dlp are only installed if the device
-# has none, so user settings and yt-dlp updates made by the browser survive deploys.
+# binaries can't be overwritten. The package has no settings.conf (launch.sh creates it from
+# settings.default.conf and adds new settings), and bin/yt-dlp is only installed if the device has
+# none, so user settings and yt-dlp updates made by the browser survive deploys.
 #
 # Usage: scripts/deploy.sh [--delete] [--dry-run]
 #   --delete   also remove files on the device that are not in dist/WPE (settings, logs kept)
@@ -41,8 +42,6 @@ fi
 
 # Changed or new: lines of the local manifest that aren't in the remote one
 grep -vxFf "$tmp/remote" "$tmp/local" | sed 's/^[0-9a-f]*  //' > "$tmp/changed" || true
-# settings.conf only if the device doesn't have one yet
-grep -q '  \./settings\.conf$' "$tmp/remote" || echo "./settings.conf" >> "$tmp/changed"
 # yt-dlp only if the device doesn't have one (the browser keeps it up to date)
 grep -q '  \./bin/yt-dlp$' "$tmp/remote" || echo "./bin/yt-dlp" >> "$tmp/changed"
 # On the device but not in the package
@@ -66,19 +65,5 @@ if [ "$DELETE" = 1 ] && [ "$n_extra" != 0 ]; then
     (cd "$tmp" && sed "s|^\./|$DEST/|" extra) | ssh "$DEVICE" 'xargs rm -f'
     # Drop directories left empty (on exFAT each one still occupies a cluster)
     ssh "$DEVICE" "find $DEST -depth -mindepth 1 -type d -empty -exec rmdir {} \\;" 2>/dev/null || true
-fi
-# New settings: append blocks (comments + KEY=default) for keys the device's settings.conf
-# doesn't have yet; existing values are never touched.
-remote_keys=$(ssh "$DEVICE" "grep -o '^[A-Z_]*=' $DEST/settings.conf 2>/dev/null" | tr -d '=')
-awk -v have=" $(echo $remote_keys) " '
-    /^#/ || /^$/ { block = block $0 "\n"; next }
-    /^[A-Z_]+=/ { key = $0; sub(/=.*/, "", key)
-                  if (index(have, " " key " ") == 0) printf "%s%s\n", block, $0
-                  block = ""; next }
-' "$SRC/settings.conf" > "$tmp/new-settings"
-if [ -s "$tmp/new-settings" ] && [ -n "$remote_keys" ]; then
-    echo "Adding new settings to the device's settings.conf:"
-    grep -o '^[A-Z_]*=.*' "$tmp/new-settings" | sed 's/^/  /'
-    ssh "$DEVICE" "cat >> $DEST/settings.conf" < "$tmp/new-settings"
 fi
 echo "Done."

@@ -64,7 +64,9 @@ right away, ads are blocked from then on. Your
 settings live in `Apps/WPE/settings.conf`. Browsing data (cookies,
 cache, history) is kept on the device's internal storage in `/mnt/UDISK/wpe-browser`.
 
-To **update**, unpack a newer release over the old folder; `settings.conf` keeps your values. To
+To **update**, unpack a newer release over the old folder: your `settings.conf` keeps its values (a
+release only contains `settings.default.conf`; settings that are new in an update are added to your file
+with their defaults on the next start). To
 **uninstall**, delete `Apps/WPE` (and `/mnt/UDISK/wpe-browser` for the browsing data).
 
 ## 🎮 Controls
@@ -358,7 +360,8 @@ the package ships its own glibc and dynamic loader:
 - WebKit's install prefix **is** the device path `/mnt/SDCARD/Apps/WPE`, so it finds `libexec/` helpers at
   its compiled-in location. The app must be installed exactly there.
 
-`launch.sh` (replaced by updates, not meant for editing) exports the settings `settings.conf` sets as
+`launch.sh` (replaced by updates, not meant for editing) creates `settings.conf` from `settings.default.conf`
+or adds the settings it lacks, exports the settings `settings.conf` sets as
 `WPE_TSP_*` (an already-set environment variable wins; built-in defaults live in `app/browser.c`),
 starts the browser again (re-reading `settings.conf`) when it exits with code 75 (the Settings page's
 restart, reopening the page in `/tmp/wpe-tsp-restart-uri`), and
@@ -479,9 +482,10 @@ scripts/deploy.sh --delete    # also remove files on the device that are no long
 - it sends **only the changed files** in one tar stream over ssh, e.g. ~200 KB after an app-only change,
   instead of the whole package;
 - it stops the browser first when something changed, because running binaries can't be overwritten;
-- it installs `settings.conf` only if the device has none, so settings survive updates. New settings
-  (keys the device's file doesn't have) are appended with their comments; existing values are never
-  changed. Likewise `bin/yt-dlp` is installed only if missing, since the browser updates it on the device.
+- the package has no `settings.conf`, only `settings.default.conf`: `launch.sh` creates `settings.conf`
+  from it on the first start, and on later starts appends the settings it doesn't have yet (with their
+  comments; existing values are never changed), so settings survive deploys and release updates alike.
+  `bin/yt-dlp` is installed only if missing, since the browser updates it on the device.
   `--delete` keeps `settings.conf`, `fonts.conf`, the log and `bin/yt-dlp*`; check its `--dry-run` list
   first, since it removes anything else that isn't in the package.
 
@@ -837,7 +841,7 @@ app/
   pages.h                             shared look + d-pad navigation of the wpe-tsp:// pages
   gamepad.h                           device button/axis numbering
   launch.sh                           launcher (environment, wake lock)
-  settings.conf                       user settings (see Settings)
+  settings.default.conf               default settings; launch.sh makes settings.conf from it (see Settings)
   config.json, icon.png               TrimUI app entry
 runtime/
   mpv/                                mpv config (tracked) + prebuilt mpv and lib/ (not in git)

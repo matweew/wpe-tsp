@@ -4,7 +4,25 @@
 progdir="$(dirname "$(readlink -f "$0")")"
 cd "$progdir"
 
-# User settings live in settings.conf (kept across updates; the browser's Settings page edits it).
+# User settings live in settings.conf (the browser's Settings page edits it). Updates ship
+# settings.default.conf, so unpacking a release over the folder never touches the user's file: the
+# first start copies it, later starts add the settings an update introduced (comments + default),
+# never changing existing values.
+if [ ! -f "$progdir/settings.conf" ]; then
+    cp "$progdir/settings.default.conf" "$progdir/settings.conf"
+elif [ -f "$progdir/settings.default.conf" ]; then
+    have=" $(grep -o '^[A-Z_]*=' "$progdir/settings.conf" | tr -d '=' | tr '\n' ' ') "
+    new=$(awk -v have="$have" '
+        /^#/ || /^$/ { block = block $0 "\n"; next }
+        /^[A-Z_]+=/ { key = $0; sub(/=.*/, "", key)
+                      if (index(have, " " key " ") == 0) printf "%s%s\n", block, $0
+                      block = ""; next }
+    ' "$progdir/settings.default.conf")
+    if [ -n "$new" ]; then
+        [ -n "$(tail -c 1 "$progdir/settings.conf")" ] && echo >> "$progdir/settings.conf" # ends a last line
+        printf '%s\n' "$new" >> "$progdir/settings.conf"
+    fi
+fi
 # The browser has its own default for every setting that isn't there (HOME_URL has none).
 # Variables already set in the environment win (used by test tooling).
 keys="HOME_URL SEARCH_URL SCALE PAGE_MEMORY_LIMIT_MB POINTER_HIDE_SECONDS HISTORY_SIZE DOWNLOAD_DIR

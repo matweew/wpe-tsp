@@ -90,7 +90,7 @@ cp /work/runtime/yt-dlp "$OUT/bin/yt-dlp"
 chmod 755 "$OUT/mpv/mpv" "$OUT/bin/yt-dlp"
 
 # --- launcher
-cp /work/app/launch.sh /work/app/config.json /work/app/settings.conf "$OUT/"
+cp /work/app/launch.sh /work/app/config.json /work/app/settings.default.conf "$OUT/"
 [ -f /work/app/icon.png ] && cp /work/app/icon.png "$OUT/"
 chmod +x "$OUT/launch.sh"
 
