@@ -170,7 +170,7 @@ the file can still be edited by hand on the SD card (changes then apply at the n
 | `AD_BLOCK` | `1` | Ad and tracker blocking; `0` = off |
 | `AD_BLOCK_EXCEPTIONS` | empty | Sites where ads aren't blocked, separated by spaces (each covers its subdomains). The SELECT menu's "Allow ads on <site>" / "Block ads on <site>" updates this line |
 | `HW_VIDEO_DECODE` | `1` | H.264 in pages on the hardware decoder (falls back to software by itself); YouTube in the page is asked for H.264. `0` = software only |
-| `PLAY_YOUTUBE_IN_MPV` | `0` | YouTube only: `1` = in mpv (hardware H.264, smooth 720p), streams found by yt-dlp; `2` = the same with ytp (RustyPipe): ~2 s instead of ~9 s to start, ~28 MB of memory instead of ~330 MB; `0` = in the page (software). Other videos always play in the page |
+| `PLAY_YOUTUBE_IN_MPV` | `0` | YouTube only: `1` = in mpv (hardware H.264, smooth 720p), streams found by yt-dlp; `2` = the same with ytp (RustyPipe): ~2 s instead of ~9 s to start, ~28 MB of memory instead of ~330 MB; `0` = in the page (H.264 on the hardware decoder too, but ~38% CPU with YouTube's page running, ~14% in mpv). Other videos always play in the page |
 | `DOWNLOAD_DIR` | `/mnt/SDCARD/Downloads` | Where downloads go |
 | `HISTORY_SIZE` | `20` | Pages kept in History (`0` = none, max 60) |
 | `POINTER_HIDE_SECONDS` | `10` | Hide the idle pointer after this long (`0` = never) |
