@@ -24,10 +24,11 @@ you drive it with the gamepad, a USB keyboard and mouse, or the on-screen keyboa
 - 📺 **Video and audio in pages**: `<video>`/`<audio>`, YouTube included, play right in the page
   (GStreamer: H.264 on the Allwinner hardware decoder, 720p at ~13% CPU; VP9, AAC, Opus, MP3… in
   software; frames converted to RGB on the GPU).
-- 🚀 **Or YouTube in hardware-accelerated mpv** (`PLAY_YOUTUBE_IN_MPV=1`): video pages play in the
+- 🚀 **Or YouTube in hardware-accelerated mpv** (`PLAY_YOUTUBE_IN_MPV=1` or `2`): video pages play in the
   bundled mpv with the Allwinner H.264 hardware decoder (720p at ~14% CPU). The page stays open for
   comments and likes, with a **▶ Play in mpv** button to watch again. Embedded YouTube players play the
-  same way.
+  same way. The stream is found by yt-dlp (`1`) or by RustyPipe (`2`: ~2 s instead of ~9 s, ~28 MB of
+  memory instead of ~330 MB).
 - 🔄 **yt-dlp updates itself**: the browser checks for new releases daily and installs them after a
   checksum check, so YouTube keeps working.
 - 🛡️ **Ad and tracker blocking**: EasyList + EasyPrivacy (~94,000 rules) built into WebKit, pages load
@@ -44,8 +45,8 @@ you drive it with the gamepad, a USB keyboard and mouse, or the on-screen keyboa
 - 🕘 **Favorites, history, home page, search**: save pages to Favorites; start on your home page, the last
   page or the address bar; anything that isn't a URL is searched.
 - 🍪 **Stays logged in**: cookies and site storage are kept across restarts.
-- 📦 **Self-contained**: one folder with everything (its own libraries, mpv, yt-dlp); nothing else to
-  install.
+- 📦 **Self-contained**: one folder with everything (its own libraries, mpv, yt-dlp, RustyPipe); nothing
+  else to install.
 
 ## 📦 Installation
 
@@ -102,7 +103,7 @@ an image (copy address, save), a video (play/pause, mute, loop, copy address, do
 (copy), a text field (cut, copy, paste) or the page (back, forward, reload). Pages with menus of their
 own (e.g. desktop YouTube's player) get the right click instead.
 
-**In mpv** (YouTube with `PLAY_YOUTUBE_IN_MPV=1`, media files):
+**In mpv** (YouTube with `PLAY_YOUTUBE_IN_MPV=1` or `2`, media files):
 
 | Control | Action |
 |---|---|
@@ -169,7 +170,7 @@ the file can still be edited by hand on the SD card (changes then apply at the n
 | `AD_BLOCK` | `1` | Ad and tracker blocking; `0` = off |
 | `AD_BLOCK_EXCEPTIONS` | empty | Sites where ads aren't blocked, separated by spaces (each covers its subdomains). The SELECT menu's "Allow ads on <site>" / "Block ads on <site>" updates this line |
 | `HW_VIDEO_DECODE` | `1` | H.264 in pages on the hardware decoder (falls back to software by itself); YouTube in the page is asked for H.264. `0` = software only |
-| `PLAY_YOUTUBE_IN_MPV` | `0` | YouTube only: `1` = in mpv (hardware H.264, smooth 720p), streams found by yt-dlp; `2` = the same with ytp (RustyPipe), ~2 s instead of 10–15 s to start; `0` = in the page (software). Other videos always play in the page |
+| `PLAY_YOUTUBE_IN_MPV` | `0` | YouTube only: `1` = in mpv (hardware H.264, smooth 720p), streams found by yt-dlp; `2` = the same with ytp (RustyPipe): ~2 s instead of ~9 s to start, ~28 MB of memory instead of ~330 MB; `0` = in the page (software). Other videos always play in the page |
 | `DOWNLOAD_DIR` | `/mnt/SDCARD/Downloads` | Where downloads go |
 | `HISTORY_SIZE` | `20` | Pages kept in History (`0` = none, max 60) |
 | `POINTER_HIDE_SECONDS` | `10` | Hide the idle pointer after this long (`0` = never) |
@@ -187,6 +188,8 @@ Keep a Latin layout such as `us` in the list for typing addresses.
 
 - **A video doesn't play:** the message at the bottom says why. YouTube changes often break old yt-dlp
   versions: accept the update prompt, or delete `Apps/WPE/bin/yt-dlp.checked` and restart to check now.
+  The other way of finding streams may still work: switch *YouTube plays* between yt-dlp and RustyPipe
+  in Settings (ytp, the RustyPipe one, is updated with the browser only).
 - **A page is closed with "needs more memory":** the site is too heavy for 1 GB. Try SELECT → Request
   mobile site, or raise `PAGE_MEMORY_LIMIT_MB` a little. If it happens on pages that usually work,
   **restart the device**: TrimUI's own on-screen display service (`trimui_osdd`) loses 2–4 MB of RAM every
@@ -209,14 +212,14 @@ Keep a Latin layout such as `us` in the list for typing addresses.
 ## 🙏 Credits
 
 [WPE WebKit](https://wpewebkit.org/) · [mpv](https://mpv.io/) (built by [mpv-tsp](https://github.com/matweew/mpv-tsp)) · [FFmpeg](https://ffmpeg.org/) ·
-[yt-dlp](https://github.com/yt-dlp/yt-dlp) · [EasyList / EasyPrivacy](https://easylist.to/) ·
+[yt-dlp](https://github.com/yt-dlp/yt-dlp) · [RustyPipe](https://codeberg.org/ThetaDev/rustypipe) · [EasyList / EasyPrivacy](https://easylist.to/) ·
 [libxkbcommon](https://xkbcommon.org/) and [xkeyboard-config](https://gitlab.freedesktop.org/xkeyboard-config/xkeyboard-config) ·
 [SDL2](https://www.libsdl.org/) (TrimUI's [toolchain SDK](https://github.com/trimui/toolchain_sdk_smartpro)) ·
 [DejaVu fonts](https://dejavu-fonts.github.io/).
 
 ## License
 
-[MIT](LICENSE). Third-party components (WPE WebKit, mpv, FFmpeg, yt-dlp, the bundled libraries and data)
+[MIT](LICENSE). Third-party components (WPE WebKit, mpv, FFmpeg, yt-dlp, ytp, the bundled libraries and data)
 keep their own licenses: see [licenses/](licenses/README.md). The package's `licenses/` folder has all their
 license texts and sources (`third-party.zip`).
 
@@ -246,7 +249,7 @@ license texts and sources (`third-party.zip`).
 │ Memory watchdog, SELECT menu (menu.c), load-progress bar               │
 │ wpe-tsp:// pages (History, Downloads), downloads (downloads.c)         │
 │ Content filter (ad blocking), user scripts (video/embed → mpv)         │
-│ Video: bundled yt-dlp → mpv (player.c), screen handover, yt-dlp updates│
+│ Video: yt-dlp or ytp → mpv (player.c), screen handover, yt-dlp updates │
 └───────▲────────────────────────────────────────────────┬───────────────┘
         │ frames: DMA-bufs from ION (WPEBufferDMABuf),   │ IPC
         │ zero-copy; shared memory as the fallback       ▼
@@ -730,14 +733,16 @@ demuxers for MP4/WebM/Ogg/MP3/WAV, parsers, gst-libav decoders, Opus/Vorbis, GL 
   (software fallback ~31%); 720p60 H.264 on Cedar ~44% CPU, all 60 frames/s decoded, ~57 shown; mobile YouTube (H.264 on Cedar) ~38% CPU with the page, drops only in
   the first seconds; 720p30 VP9 8 Mbit/s in software ~52%, 30 of 30 frames/s shown. The desktop
   YouTube site is closed by the low-memory watchdog.
-- With `PLAY_YOUTUBE_IN_MPV=1` the page's own player is kept paused under the **▶ Play in mpv** buttons
+- With `PLAY_YOUTUBE_IN_MPV=1` or `2` the page's own player is kept paused under the **▶ Play in mpv** buttons
   (a capture-phase `play` listener), so it doesn't play along with mpv.
 - YouTube's *Stats for nerds* (gear menu → bottom) shows the codec, resolution and dropped frames.
 
 ### Video playback in mpv (`PLAY_YOUTUBE_IN_MPV=1` or `2`)
 
-Playback (`app/player.c`) uses the bundled `mpv/mpv` and `bin/yt-dlp`, with the options `--no-ytdl --config-dir=mpv`, subtitle fonts from `share/fonts`; yt-dlp format: H.264 +
-AAC up to 720p, the screen's resolution. H.264 is decoded by the Allwinner hardware decoder
+Playback (`app/player.c`) uses the bundled `mpv/mpv` and `bin/yt-dlp` (`PLAY_YOUTUBE_IN_MPV=1`) or
+`bin/ytp` (`2`, see [ytp instead of yt-dlp](#ytp-instead-of-yt-dlp) below), with the options
+`--no-ytdl --config-dir=mpv`, subtitle fonts from `share/fonts`; both pick H.264 + AAC up to 720p, the
+screen's resolution. H.264 is decoded by the Allwinner hardware decoder
 (`vd=h264_cedar,` in `mpv.conf`); other codecs and H.264 the hardware can't do (10-bit, 4:2:2, 4:4:4) fall
 back to FFmpeg's software decoders automatically. Measured with mpv on screen (20 s clips, whole system,
 4 cores):
@@ -752,18 +757,18 @@ back to FFmpeg's software decoders automatically. Measured with mpv on screen (2
 - **YouTube video pages** (`youtube.com/watch?v=`, `m.youtube.com`, `youtu.be/`, `/shorts/`) are detected
   when the page address changes, which covers link clicks and YouTube's in-page navigation. The page
   keeps loading (description, likes, comments) while the browser runs
-  `yt-dlp -f <format> --print live_status --print resolution -g` (with an HLS retry; portrait videos are
-  rotated 270°, matching the browser's portrait mode). While it runs, the status strip shows
-  *Loading video… B: cancel*; errors (e.g. *Video unavailable*) are shown there too. A just-finished live
-  stream (`post_live`) is reported instead of played.
+  `yt-dlp -f <format> --print live_status --print resolution -g` (with an HLS retry for live streams) or
+  `ytp streams <id> 720`; portrait videos are rotated 270°, matching the browser's portrait mode. While it
+  runs, the status strip shows *Loading video… B: cancel*; errors (e.g. *Video unavailable*) are shown
+  there too. With yt-dlp, a just-finished live stream (`post_live`) is reported instead of played.
 - **Resolved URLs are cached** in memory per video (16 most recent), so watching again or coming back to
   a video starts mpv right away. An entry is used until 10 minutes before the links' own expiry (the
   `expire=` value googlevideo.com puts in them, about 6 hours); links without one and live streams
   aren't cached. If mpv fails within 10 s on cached links (e.g. they were tied to another IP address),
-  the entry is dropped and yt-dlp runs again.
+  the entry is dropped and yt-dlp (or ytp) runs again.
 - The browser then releases its SDL window and starts mpv fullscreen, with mpv's own libraries
   (`LD_LIBRARY_PATH=mpv/lib:/usr/trimui/lib`) and certificates (`mpv/ca-certificates.crt`, also used by
-  yt-dlp).
+  yt-dlp and ytp).
 - While mpv plays, the page is unmapped (hidden), so WebKit stops rendering it and throttles its timers.
   Measured with a YouTube watch page loaded: MemAvailable stayed above 320 MB during playback.
 - When mpv exits, the window is recreated, the buttons pressed meanwhile are discarded, and the browser
@@ -778,22 +783,39 @@ back to FFmpeg's software decoders automatically. Measured with mpv on screen (2
 - **Other video and audio** (any site's `<video>`/`<audio>`, links to media files, saved downloads)
   plays in the page. Only files WebKit can't play (e.g. `.avi`) reach the download prompt, whose
   **Play** / Download / Cancel plays the file's URL in mpv.
-- Recently finished live streams (`live_status=post_live`) exist only as DASH fragments until YouTube
+- Recently finished live streams (`live_status=post_live`, yt-dlp) exist only as DASH fragments until YouTube
   processes them: `yt-dlp -g` returns a single fragment (the last few seconds), and mpv can't join
   fragments without durations, so the browser says so instead of playing those seconds.
 
-**ytp instead of yt-dlp** (`PLAY_YOUTUBE_IN_MPV=2`): `bin/ytp streams <id> 720`, a RustyPipe command-line
-front end, prints one JSON object with separate H.264 video and AAC audio URLs (or an HLS playlist for live
+#### ytp instead of yt-dlp
+
+`PLAY_YOUTUBE_IN_MPV=2` resolves YouTube with `bin/ytp streams <id> 720`, a RustyPipe command-line
+front end that prints one JSON object with separate H.264 video and AAC audio URLs (or an HLS playlist for live
 streams), the size (portrait videos are rotated as above) and the client that served them (visionOS, iOS,
 Android VR, …; each URL is range-requested near its end first, since YouTube cuts some streams off). It runs
 with `YTP_DIR=$XDG_CACHE_HOME/ytp` (player JS, visitor data) and `YTP_WPE_COOKIES` = the browser's
 `cookies.sqlite`, read only and fresh on every run (rotated cookies are never written back, so WebKit stays
 the session's only owner); the logged-in clients are only tried with a PO-token helper (`YTP_BOTGUARD`),
 which isn't bundled. Errors are its last `{"error": …}` line on stderr. The URL cache and mpv are the same as
-with yt-dlp. Measured on the device (same video, twice): ytp 2.4 s / 2.0 s, yt-dlp 10.1 s / 15.3 s. ytp is
-bundled as is and not updated by the browser; the yt-dlp update check doesn't run in this mode.
+with yt-dlp. ytp is bundled as is and not updated by the browser; the yt-dlp update check doesn't run in
+this mode.
 
-**yt-dlp updates** (`app/ytdlp.c`). YouTube changes break
+Measured on the device (Smart Pro, browser closed, page cache dropped before each run), three runs each on
+three videos and one live stream. Memory: the peak RSS, and the drop in the system's MemAvailable while
+it runs (sampled every 0.1 s); yt-dlp is a PyInstaller onefile that unpacks Python into `/tmp` (RAM) on
+every run:
+
+| | yt-dlp (`1`) | ytp (`2`) |
+|---|---|---|
+| Video: time to the stream URLs (9 runs) | 8.4–10.3 s, median 9.4 s | 1.7–6.1 s, median 2.3 s |
+| Live stream: time to the stream URLs | 15.5–24.5 s (the H.264 format fails, 8.2–14.3 s, then the HLS retry, 7.4–10.2 s) | 1.9–3.1 s (separate video and audio playlists) |
+| Peak RSS | 303–339 MB | 26–29 MB |
+| MemAvailable drop | 140–150 MB | 1–3 MB |
+| On the SD card | 40 MB (`bin/yt-dlp`) | 8.5 MB (`bin/ytp`, static) |
+
+### yt-dlp updates
+
+`app/ytdlp.c`, with `PLAY_YOUTUBE_IN_MPV=1`. YouTube changes break
 old yt-dlp versions, so 30 s after start the browser compares `bin/yt-dlp --version` (cached in
 `bin/yt-dlp.version` until the binary changes) with the latest GitHub release (looked up at most once a
 day, cached in `bin/yt-dlp.checked`):
