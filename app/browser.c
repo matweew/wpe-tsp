@@ -1137,7 +1137,9 @@ static const char EMBED_PLAY_JS[] =
  * its own player kept paused. Cover it with the video's thumbnail and a "Play in mpv" button (to
  * watch again).
  * YouTube navigates in-page and rebuilds its DOM, so the button follows the current address and is
- * re-added when it disappears (checked once per frame at most). */
+ * re-added when it disappears (checked once per frame at most).
+ * On Shorts the player fills the screen under YouTube's own buttons (search, like, comments,
+ * subscribe): only the icon and its label take presses there, the rest of the cover lets them through. */
 static const char WATCH_PLAY_JS[] =
     "(() => {"
     "if (!window.webkit || !window.webkit.messageHandlers.wpeTspPlay) return;"
@@ -1147,7 +1149,7 @@ static const char WATCH_PLAY_JS[] =
     /* DOM calls only: YouTube enforces Trusted Types, which rejects innerHTML strings */
     "const el = (css, parent) => { const e = document.createElement('div'); e.style.cssText = css;"
     "  if (parent) parent.appendChild(e); return e; };"
-    "let button = null;"
+    "let button = null, hit = null;"
     "document.addEventListener('play', e => { if (videoId() && e.target.closest('.html5-video-player'))"
     "  e.target.pause(); }, true);"
     "const build = () => {"
@@ -1155,11 +1157,12 @@ static const char WATCH_PLAY_JS[] =
     "flex-direction:column;align-items:center;justify-content:center;cursor:pointer;"
     "background:#000 center/cover no-repeat;font:600 18px sans-serif;color:#fff;text-shadow:0 1px 3px #000');"
     "  b.id = 'wpe-tsp-watch-play';"
+    "  hit = el('display:flex;flex-direction:column;align-items:center;padding:12px;pointer-events:auto', b);"
     "  const icon = el('width:84px;height:58px;border-radius:14px;background:#f00;display:flex;"
-    "align-items:center;justify-content:center', b);"
+    "align-items:center;justify-content:center', hit);"
     "  el('width:0;height:0;border-left:24px solid #fff;border-top:15px solid transparent;"
     "border-bottom:15px solid transparent;margin-left:6px', icon);"
-    "  el('margin-top:12px', b).textContent = 'Play in mpv';"
+    "  el('margin-top:12px', hit).textContent = 'Play in mpv';"
     "  b.addEventListener('click', e => { e.preventDefault(); e.stopPropagation();"
     "    window.webkit.messageHandlers.wpeTspPlay.postMessage(location.href); }, true);"
     "  return b;"
@@ -1174,6 +1177,7 @@ static const char WATCH_PLAY_JS[] =
     "  if (button.parentNode !== player) {"
     "    if (getComputedStyle(player).position === 'static') player.style.position = 'relative';"
     "    player.appendChild(button); }"
+    "  button.style.pointerEvents = location.pathname.startsWith('/shorts/') ? 'none' : 'auto';"
     "  if (button.dataset.id !== id) { button.dataset.id = id;"
     "    button.style.backgroundImage = 'linear-gradient(rgba(0,0,0,.35),rgba(0,0,0,.35)),"
     "url(\"https://i.ytimg.com/vi/' + id + '/hqdefault.jpg\")'; }"
@@ -1182,9 +1186,11 @@ static const char WATCH_PLAY_JS[] =
     "new MutationObserver(() => { if (!queued) { queued = true; requestAnimationFrame(update); } })"
     "  .observe(document.documentElement, { childList: true, subtree: true });"
     /* YouTube draws its own controls (replay, skip, progress) over the button once a video ended:
-     * take presses anywhere over the button's area first, before YouTube sees them */
+     * take presses anywhere over the button's area first, before YouTube sees them (on Shorts: over
+     * the icon and label only) */
     "const over = e => { if (!button || !button.isConnected) return false;"
-    "  const r = button.getBoundingClientRect(), t = e.touches ? e.touches[0] : e;"
+    "  const r = (button.style.pointerEvents === 'none' ? hit : button).getBoundingClientRect(),"
+    "    t = e.touches ? e.touches[0] : e;"
     "  return t && r.width && t.clientX >= r.left && t.clientX < r.right && t.clientY >= r.top && t.clientY < r.bottom; };"
     "['pointerdown', 'mousedown', 'touchstart', 'pointerup', 'mouseup', 'touchend'].forEach(type =>"
     "  window.addEventListener(type, e => { if (over(e)) { e.preventDefault(); e.stopImmediatePropagation(); } },"
