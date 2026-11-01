@@ -169,7 +169,7 @@ the file can still be edited by hand on the SD card (changes then apply at the n
 | `AD_BLOCK` | `1` | Ad and tracker blocking; `0` = off |
 | `AD_BLOCK_EXCEPTIONS` | empty | Sites where ads aren't blocked, separated by spaces (each covers its subdomains). The SELECT menu's "Allow ads on <site>" / "Block ads on <site>" updates this line |
 | `HW_VIDEO_DECODE` | `1` | H.264 in pages on the hardware decoder (falls back to software by itself); YouTube in the page is asked for H.264. `0` = software only |
-| `PLAY_YOUTUBE_IN_MPV` | `0` | YouTube only: `1` = in mpv (hardware H.264, smooth 720p); `0` = in the page (software). Other videos always play in the page |
+| `PLAY_YOUTUBE_IN_MPV` | `0` | YouTube only: `1` = in mpv (hardware H.264, smooth 720p), streams found by yt-dlp; `2` = the same with ytp (RustyPipe), ~2 s instead of 10–15 s to start; `0` = in the page (software). Other videos always play in the page |
 | `DOWNLOAD_DIR` | `/mnt/SDCARD/Downloads` | Where downloads go |
 | `HISTORY_SIZE` | `20` | Pages kept in History (`0` = none, max 60) |
 | `POINTER_HIDE_SECONDS` | `10` | Hide the idle pointer after this long (`0` = never) |
@@ -382,6 +382,7 @@ needs hard links, which exFAT lacks, so it lives on the internal ext4 partition)
 | libcedarc headers | [CalvinXu17/libcedarc](https://github.com/CalvinXu17/libcedarc) at `e68d4a7` (the commit mpv-tsp's libraries are built from), downloaded by `scripts/build-ffmpeg.sh`; the libraries themselves come from `runtime/mpv/lib` |
 | EasyList, EasyPrivacy | [easylist.to](https://easylist.to/), downloaded by `scripts/package.sh` |
 | XKB layouts | Debian's `xkb-data` ([xkeyboard-config](https://gitlab.freedesktop.org/xkeyboard-config/xkeyboard-config)), compiled with `xkbcli` from `libxkbcommon-tools` |
+| `runtime/ytp` *(not in git)* | A RustyPipe command-line front end (`ytp streams <id> <max-height>` prints the stream URLs as JSON), a static aarch64 musl binary, GPL-3.0 |
 | `runtime/yt-dlp` *(not in git)* | `yt-dlp_linux_aarch64` from [yt-dlp releases](https://github.com/yt-dlp/yt-dlp/releases/latest). Only the initial copy: the browser updates `bin/yt-dlp` on the device itself |
 | `runtime/mpv/mpv`, `runtime/mpv/lib/`, `runtime/mpv/licenses/` *(not in git)* | [mpv-tsp](https://github.com/matweew/mpv-tsp) (`build.sh` → `dist/`): mpv 0.36 with an SDL2 GLES context for the GE8300 and its libraries (FFmpeg 6.1, libass, dav1d, OpenSSL 3, …, built against the device's glibc), including the **Allwinner Cedar hardware H.264 decoder** (`h264_cedar` in libavcodec plus the libcedarc libraries). An LGPL build of FFmpeg and mpv, so it may link the proprietary libcedarc and be redistributed |
 
@@ -416,7 +417,7 @@ directories become root-owned.
 
 ```bash
 # 0. Put the prebuilt binaries in runtime/ (see Third-party sources):
-#    runtime/yt-dlp, runtime/mpv/mpv, runtime/mpv/lib/
+#    runtime/yt-dlp, runtime/ytp, runtime/mpv/mpv, runtime/mpv/lib/
 
 # 1. Build the cross-compilation image (once, ~10 min)
 docker build -t wpe-tsp-builder .
@@ -733,7 +734,7 @@ demuxers for MP4/WebM/Ogg/MP3/WAV, parsers, gst-libav decoders, Opus/Vorbis, GL 
   (a capture-phase `play` listener), so it doesn't play along with mpv.
 - YouTube's *Stats for nerds* (gear menu → bottom) shows the codec, resolution and dropped frames.
 
-### Video playback in mpv (`PLAY_YOUTUBE_IN_MPV=1`)
+### Video playback in mpv (`PLAY_YOUTUBE_IN_MPV=1` or `2`)
 
 Playback (`app/player.c`) uses the bundled `mpv/mpv` and `bin/yt-dlp`, with the options `--no-ytdl --config-dir=mpv`, subtitle fonts from `share/fonts`; yt-dlp format: H.264 +
 AAC up to 720p, the screen's resolution. H.264 is decoded by the Allwinner hardware decoder
@@ -780,6 +781,17 @@ back to FFmpeg's software decoders automatically. Measured with mpv on screen (2
 - Recently finished live streams (`live_status=post_live`) exist only as DASH fragments until YouTube
   processes them: `yt-dlp -g` returns a single fragment (the last few seconds), and mpv can't join
   fragments without durations, so the browser says so instead of playing those seconds.
+
+**ytp instead of yt-dlp** (`PLAY_YOUTUBE_IN_MPV=2`): `bin/ytp streams <id> 720`, a RustyPipe command-line
+front end, prints one JSON object with separate H.264 video and AAC audio URLs (or an HLS playlist for live
+streams), the size (portrait videos are rotated as above) and the client that served them (visionOS, iOS,
+Android VR, …; each URL is range-requested near its end first, since YouTube cuts some streams off). It runs
+with `YTP_DIR=$XDG_CACHE_HOME/ytp` (player JS, visitor data) and `YTP_WPE_COOKIES` = the browser's
+`cookies.sqlite`, read only and fresh on every run (rotated cookies are never written back, so WebKit stays
+the session's only owner); the logged-in clients are only tried with a PO-token helper (`YTP_BOTGUARD`),
+which isn't bundled. Errors are its last `{"error": …}` line on stderr. The URL cache and mpv are the same as
+with yt-dlp. Measured on the device (same video, twice): ytp 2.4 s / 2.0 s, yt-dlp 10.1 s / 15.3 s. ytp is
+bundled as is and not updated by the browser; the yt-dlp update check doesn't run in this mode.
 
 **yt-dlp updates** (`app/ytdlp.c`). YouTube changes break
 old yt-dlp versions, so 30 s after start the browser compares `bin/yt-dlp --version` (cached in

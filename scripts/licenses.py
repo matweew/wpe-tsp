@@ -3,7 +3,7 @@
 dist/WPE bundles.
 
 Every file in the package is traced to where it came from: WebKit's build, our FFmpeg, mpv-tsp,
-libcedarc, yt-dlp, EasyList or a Debian package (through dpkg's file lists, the bundle manifest
+libcedarc, yt-dlp, ytp, EasyList or a Debian package (through dpkg's file lists, the bundle manifest
 of scripts/bundle-libs.sh and the GStreamer stage's dpkg data in /opt/gstreamer-dpkg). A file of
 unknown origin stops the build, so anything newly bundled gets its license added here.
 
@@ -142,6 +142,8 @@ for root, dirs, files in os.walk(OUT):
             key = 'cedarc' if name in CEDARC_LIBS else 'mpv'
         elif rel == 'bin/yt-dlp':
             key = 'ytdlp'
+        elif rel == 'bin/ytp':
+            key = 'ytp'
         elif rel.startswith('share/fonts/'):
             key = 'deb:fonts-dejavu-core'
         elif rel.startswith('share/xkb'):
@@ -275,6 +277,15 @@ other libraries, whose licenses follow. The browser replaces it with newer yt-dl
 Source: https://github.com/yt-dlp/yt-dlp/releases/tag/{ytdlp_tag}
 """, [('LICENSE', fetch(f'{GH}/yt-dlp/yt-dlp/{ytdlp_tag}/LICENSE')),
       ('THIRD_PARTY_LICENSES.txt', fetch(f'{GH}/yt-dlp/yt-dlp/{ytdlp_tag}/THIRD_PARTY_LICENSES.txt'))])
+
+section('ytp (RustyPipe)', files_of('ytp'), """
+Resolves YouTube pages for mpv with PLAY_YOUTUBE_IN_MPV=2: a small command-line front end to RustyPipe
+(https://codeberg.org/ThetaDev/rustypipe, commit 597db17 with local patches).
+GPL-3.0 (text at the end of this file). A static Rust binary; the crates it links (tokio, reqwest,
+rustls, ring, rusqlite with SQLite, serde, ...) are MIT, Apache-2.0, ISC, BSD-3-Clause, Unicode or
+public domain, as listed in its Cargo.lock.
+""", [])
+common.add('GPL-3')
 
 section('EasyList and EasyPrivacy', files_of('easylist'), """
 The ad and tracker blocking rules: share/adblock/rules.json is converted from them (scripts/make-adblock.py).

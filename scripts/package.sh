@@ -84,10 +84,12 @@ cp /work/build/xkb-keymaps.bin "$OUT/share/xkb-keymaps.bin"
 python3 /work/scripts/xkb-minimal.py /opt/runtime-data/usr/share/X11/xkb "$OUT/share/xkb"
 
 # --- video: mpv (its own libraries, built for the device's glibc: not bundled/patched) and
-# yt-dlp (updated on the device by the browser; deploy.sh only installs it if missing)
+# yt-dlp (updated on the device by the browser; deploy.sh only installs it if missing), ytp
+# (a RustyPipe CLI, static musl binary: PLAY_YOUTUBE_IN_MPV=2)
 cp -r /work/runtime/mpv "$OUT/mpv"
 cp /work/runtime/yt-dlp "$OUT/bin/yt-dlp"
-chmod 755 "$OUT/mpv/mpv" "$OUT/bin/yt-dlp"
+cp /work/runtime/ytp "$OUT/bin/ytp"
+chmod 755 "$OUT/mpv/mpv" "$OUT/bin/yt-dlp" "$OUT/bin/ytp"
 
 # --- launcher
 cp /work/app/launch.sh /work/app/config.json /work/app/settings.default.conf "$OUT/"

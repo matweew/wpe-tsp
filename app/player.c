@@ -1,11 +1,12 @@
 /*
- * Video playback through the bundled mpv/yt-dlp, see player.h.
+ * Video playback through the bundled mpv/yt-dlp (or ytp), see player.h.
  * Mirrors youtube-tsp's src/player.c: same yt-dlp invocation (format, --print resolution -g,
- * HLS retry, portrait rotation) and same mpv command line and environment.
+ * HLS retry, portrait rotation), same "ytp streams" handling and same mpv command line and environment.
  */
 #include "player.h"
 
 #include <fcntl.h>
+#include <jsc/jsc.h>
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
@@ -27,6 +28,7 @@
 #define CACHE_MARGIN_S 600
 /* mpv failing this soon on cached URLs (e.g. 403: links tied to a changed IP) means resolve again */
 #define CACHE_FAIL_S 10
+#define YTP_MAX_HEIGHT "720"  /* youtube-tsp's default: what the decoder plays smoothly */
 
 typedef enum { P_IDLE, P_RESOLVING, P_PLAYING } PlayerState;
 
@@ -41,6 +43,9 @@ static struct {
     char *dir;                  /* <app>/mpv: mpv, lib/, mpv.conf, input.conf, ca-certificates.crt */
     char *fonts_dir;            /* <app>/share/fonts (subtitles) */
     char *ytdlp;                /* <app>/bin/yt-dlp */
+    char *ytp;                  /* <app>/bin/ytp */
+    gboolean use_ytp;           /* resolve YouTube with ytp instead of yt-dlp */
+    char *ytp_cookies, *ytp_cache;
     PlayerCallbacks cb;
     PlayerState state;
     GPid pid;
@@ -99,7 +104,16 @@ void player_init(const char *app_dir, const PlayerCallbacks *callbacks)
     pl.dir = g_build_filename(app_dir, "mpv", NULL);
     pl.fonts_dir = g_build_filename(app_dir, "share", "fonts", NULL);
     pl.ytdlp = g_build_filename(app_dir, "bin", "yt-dlp", NULL);
+    pl.ytp = g_build_filename(app_dir, "bin", "ytp", NULL);
     pl.cb = *callbacks;
+}
+
+void player_use_ytp(const char *cookies, const char *cache_dir)
+{
+    pl.use_ytp = TRUE;
+    pl.ytp_cookies = g_strdup(cookies);
+    pl.ytp_cache = g_strdup(cache_dir);
+    g_mkdir_with_parents(cache_dir, 0755);
 }
 
 gboolean player_available(void)
@@ -398,12 +412,18 @@ static char *yt_dlp_error(void)
     return message ? message : g_strdup("could not get the video stream");
 }
 
+static void ytp_resolved(gint status);
+
 static void on_resolve_exited(GPid pid, gint status, gpointer user_data)
 {
     (void)user_data;
     reap(pid);
     if (pl.state != P_RESOLVING || pid != pl.pid) /* cancelled (or an older, cancelled run) */
         return;
+    if (pl.use_ytp) {
+        ytp_resolved(status);
+        return;
+    }
     if (!g_spawn_check_wait_status(status, NULL)) {
         char *message = yt_dlp_error();
         if (!pl.hls_retry_done && strstr(message, "Requested format is not available")) {
@@ -463,8 +483,140 @@ static void on_resolve_exited(GPid pid, gint status, gpointer user_data)
     g_free(audio);
 }
 
+/* ---- ytp (RustyPipe) ------------------------------------------------------ */
+
+/* "ytp streams" prints one JSON object (see youtube-tsp's backend/ytp/src/main.rs); JSC parses it */
+static char *json_string(JSCValue *obj, const char *key)
+{
+    JSCValue *v = jsc_value_object_get_property(obj, key);
+    char *s = jsc_value_is_string(v) ? jsc_value_to_string(v) : NULL;
+    g_object_unref(v);
+    if (s && !*s)
+        g_clear_pointer(&s, g_free);
+    return s;
+}
+
+static int json_int(JSCValue *obj, const char *key)
+{
+    JSCValue *v = jsc_value_object_get_property(obj, key);
+    int n = jsc_value_is_number(v) ? jsc_value_to_int32(v) : 0;
+    g_object_unref(v);
+    return n;
+}
+
+static gboolean json_true(JSCValue *obj, const char *key)
+{
+    JSCValue *v = jsc_value_object_get_property(obj, key);
+    gboolean b = jsc_value_is_boolean(v) && jsc_value_to_boolean(v);
+    g_object_unref(v);
+    return b;
+}
+
+static JSCValue *json_parse(JSCContext *ctx, const char *text)
+{
+    JSCValue *v = text ? jsc_value_new_from_json(ctx, text) : NULL;
+    if (v && !jsc_value_is_object(v))
+        g_clear_object(&v);
+    jsc_context_clear_exception(ctx);
+    return v;
+}
+
+/* ytp's error: the last {"error": "..."} line on its stderr ({"warning": ...} lines are only logged) */
+static char *ytp_error(JSCContext *ctx)
+{
+    char *text = NULL;
+    g_file_get_contents(RESOLVE_ERR, &text, NULL, NULL);
+    char *message = NULL;
+    char **lines = g_strsplit(text ? text : "", "\n", -1);
+    for (int i = 0; lines[i]; i++) {
+        if (!*lines[i])
+            continue;
+        fprintf(stderr, "[wpe-tsp] video: ytp: %s\n", lines[i]);
+        JSCValue *j = g_str_has_prefix(lines[i], "{\"error\"") ? json_parse(ctx, lines[i]) : NULL;
+        char *e = j ? json_string(j, "error") : NULL;
+        if (e) {
+            g_free(message);
+            message = e;
+        }
+        g_clear_object(&j);
+    }
+    g_strfreev(lines);
+    g_free(text);
+    return message ? message : g_strdup("could not get the video stream");
+}
+
+static void ytp_resolved(gint status)
+{
+    JSCContext *ctx = jsc_context_new();
+    /* The exit status isn't reliable here (GLib reported 0 for ytp's exit 1): no JSON on stdout is a
+     * failure too */
+    char *text = NULL;
+    if (g_spawn_check_wait_status(status, NULL))
+        g_file_get_contents(RESOLVE_OUT, &text, NULL, NULL);
+    JSCValue *j = json_parse(ctx, text);
+    g_free(text);
+    if (!j) {
+        char *message = ytp_error(ctx);
+        fail(message);
+        g_free(message);
+        g_object_unref(ctx);
+        return;
+    }
+    /* Separate video + audio URLs; live streams and some fallbacks come as an HLS playlist only */
+    char *video = json_string(j, "video_url"), *audio = NULL;
+    if (video)
+        audio = json_string(j, "audio_url");
+    else
+        video = json_string(j, "hls_url");
+    int width = json_int(j, "width"), height = json_int(j, "height");
+    int rotate = height > width ? 270 : 0; /* portrait video: counterclockwise, like the browser's portrait mode */
+    gboolean live = json_true(j, "is_live");
+    char *client = json_string(j, "client");
+    fprintf(stderr, "[wpe-tsp] video: ytp: client %s, %dx%d%s%s\n", client ? client : "?", width, height,
+            live ? ", live" : "", json_true(j, "capped") ? ", capped at 360p" : "");
+    g_free(client);
+    g_object_unref(j);
+    g_object_unref(ctx);
+
+    if (video) {
+        if (!live) /* a live stream's URLs are a moving window: resolve each time */
+            cache_add(pl.watch_url, video, audio, rotate);
+        start_mpv(video, audio, rotate);
+    } else
+        fail("no stream URL from ytp");
+    g_free(video);
+    g_free(audio);
+}
+
+static void start_ytp(void)
+{
+    const char *id = strstr(pl.watch_url, "v=") + 2; /* canonical: https://www.youtube.com/watch?v=<id> */
+    char *argv[] = { pl.ytp, "streams", (char *)id, YTP_MAX_HEIGHT, NULL };
+    char *ca = ca_path();
+    char **env = g_environ_setenv(g_get_environ(), "SSL_CERT_FILE", ca, TRUE);
+    env = g_environ_setenv(env, "YTP_DIR", pl.ytp_cache, TRUE);
+    env = g_environ_setenv(env, "YTP_WPE_COOKIES", pl.ytp_cookies, TRUE);
+
+    GError *error = NULL;
+    if (g_spawn_async(pl.dir, argv, env, G_SPAWN_DO_NOT_REAP_CHILD, redirect_output, NULL, &pl.pid, &error)) {
+        pl.state = P_RESOLVING;
+        fprintf(stderr, "[wpe-tsp] video: resolving %s (ytp)\n", pl.watch_url);
+        g_child_watch_add(pl.pid, on_resolve_exited, NULL);
+        status_changed();
+    } else {
+        fail(error->message);
+        g_error_free(error);
+    }
+    g_strfreev(env);
+    g_free(ca);
+}
+
 static void start_resolve(void)
 {
+    if (pl.use_ytp) {
+        start_ytp();
+        return;
+    }
     char *ca = ca_path();
     const char *format = pl.hls_retry_done ? HLS_FORMAT : YT_DLP_FORMAT;
     char *argv[] = { pl.ytdlp, "-f", (char *)format, "--print", "live_status", "--print", "resolution", "-g",
@@ -490,7 +642,11 @@ void player_play_youtube(const char *watch_url)
     if (pl.state != P_IDLE)
         return;
     g_clear_pointer(&pl.error, g_free);
-    if (!g_file_test(pl.ytdlp, G_FILE_TEST_IS_EXECUTABLE)) {
+    if (pl.use_ytp && !g_file_test(pl.ytp, G_FILE_TEST_IS_EXECUTABLE)) {
+        fail("ytp isn't installed");
+        return;
+    }
+    if (!pl.use_ytp && !g_file_test(pl.ytdlp, G_FILE_TEST_IS_EXECUTABLE)) {
         fail("yt-dlp isn't installed");
         if (pl.cb.ytdlp_missing)
             pl.cb.ytdlp_missing(pl.cb.user_data);

@@ -21,6 +21,7 @@ every small file takes 128 KB there.
 | FFmpeg, minimal build for in-page video (`lib/libav*`) | LGPL-2.1-or-later (no GPL or nonfree parts) | [ffmpeg.org](https://ffmpeg.org/) release + `ffmpeg-cedar/`, `scripts/build-ffmpeg.sh` |
 | mpv and its libraries (`mpv/`) | LGPL-2.1-or-later build of mpv and FFmpeg; OpenSSL Apache-2.0, dav1d BSD, libass ISC, FreeType FTL, HarfBuzz/libxml2/Expat/fontconfig MIT, FriBidi LGPL, SDL2 zlib; CA list MPL-2.0 | [mpv-tsp](https://github.com/matweew/mpv-tsp); texts in `mpv/licenses/third-party.zip` |
 | libcedarc (`lib/libvdecoder.so`, `libVE.so`, … and in `mpv/lib/`) | © Allwinner Technology, no published license (also part of TrimUI's firmware) | [CalvinXu17/libcedarc](https://github.com/CalvinXu17/libcedarc) |
+| ytp (`bin/ytp`), a command-line front end to [RustyPipe](https://codeberg.org/ThetaDev/rustypipe) | GPL-3.0; its Rust crates MIT, Apache-2.0, ISC, BSD | RustyPipe at `597db17` with local patches |
 | yt-dlp (`bin/yt-dlp`) | Unlicense; its bundled Python and libraries: PSF-2.0, MIT, BSD, … | [yt-dlp releases](https://github.com/yt-dlp/yt-dlp/releases) |
 | EasyList, EasyPrivacy (`share/adblock/rules.json`, converted) | GPL-3.0-or-later or CC BY-SA 3.0+ | [easylist.to](https://easylist.to/) |
 | Debian 12 packages: glibc, GLib, libsoup, GnuTLS, ICU, GStreamer and its plugins, …, DejaVu fonts, xkeyboard-config, shared-mime-info | each package's `copyright` (LGPL, GPL, MIT, BSD, …) | [sources.debian.org](https://sources.debian.org/) |

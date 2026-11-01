@@ -21,7 +21,7 @@ static const char *const scales[] = { "", "Per device", /* 1.0 to 3.0 (the brows
     "3.0", "3.0", NULL };
 static const char *const user_agents[] = { "mobile", "Mobile", "desktop", "Desktop", NULL };
 static const char *const on_off[] = { "1", "On", "0", "Off", NULL };
-static const char *const youtube_players[] = { "0", "In the browser", "1", "In mpv", NULL };
+static const char *const youtube_players[] = { "0", "In the browser", "1", "In mpv (yt-dlp)", "2", "In mpv (RustyPipe)", NULL };
 static const char *const memory_limits[] = { "350", "350 MB", "400", "400 MB", "450", "450 MB", "500", "500 MB",
                                              "550", "550 MB", "600", "600 MB", "650", "650 MB", "700", "700 MB", NULL };
 static const char *const hide_times[] = { "0", "Never", "5", "5 s", "10", "10 s", "20", "20 s", "30", "30 s", "60", "60 s", NULL };
@@ -41,7 +41,7 @@ static const Setting setting_list[] = {
     { "USER_AGENT", "Site version", "Mobile sites are lighter: best for 1 GB of RAM", user_agents, NULL },
     { "AD_BLOCK", "Block ads and trackers", "EasyList + EasyPrivacy; pages load faster and use less memory", on_off, "Ads" },
     { "AD_BLOCK_EXCEPTIONS", "Ads allowed on", "Sites separated by spaces (with their subdomains); also from the menu", NULL, NULL },
-    { "PLAY_YOUTUBE_IN_MPV", "YouTube plays", "In mpv: hardware H.264, smooth 720p, light on CPU and memory", youtube_players, "Video" },
+    { "PLAY_YOUTUBE_IN_MPV", "YouTube plays", "In mpv: hardware H.264, smooth 720p, light on CPU; RustyPipe starts in ~2 s, yt-dlp in 10-15 s", youtube_players, "Video" },
     { "HW_VIDEO_DECODE", "Hardware H.264 in pages", "720p at ~13% CPU instead of ~70%", on_off, NULL },
     { "WEBGL", "WebGL (3D graphics)", "3D pages use more memory", on_off, NULL },
     { "KEYBOARD_LAYOUTS", "Keyboard layouts", "XKB names, e.g. \"us,ua,de(nodeadkeys)\"; the first is the default", NULL, "Input" },

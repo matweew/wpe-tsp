@@ -1100,7 +1100,7 @@ static void on_uri_changed(WebKitWebView *web_view, GParamSpec *pspec, gpointer 
     g_free(watch);
 }
 
-/* PLAY_YOUTUBE_IN_MPV=1: embedded YouTube players (iframes of youtube.com/embed/ID) are covered
+/* PLAY_YOUTUBE_IN_MPV=1/2: embedded YouTube players (iframes of youtube.com/embed/ID) are covered
  * with a "Play in mpv" button that sends the video to the browser, and the embed's own player is
  * kept paused (it would play under the button). Injected into all frames; YouTube may rebuild its
  * DOM, so the button is re-added when it disappears. */
@@ -1133,7 +1133,7 @@ static const char EMBED_PLAY_JS[] =
     "new MutationObserver(add).observe(document.documentElement, { childList: true, subtree: true });"
     "})()";
 
-/* YouTube's own pages (watch, Shorts) with PLAY_YOUTUBE_IN_MPV=1: the page stays open next to mpv,
+/* YouTube's own pages (watch, Shorts) with PLAY_YOUTUBE_IN_MPV=1/2: the page stays open next to mpv,
  * its own player kept paused. Cover it with the video's thumbnail and a "Play in mpv" button (to
  * watch again).
  * YouTube navigates in-page and rebuilds its DOM, so the button follows the current address and is
@@ -2713,6 +2713,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "[wpe-tsp] START_PAGE=%s unknown, using home\n", start_env);
     const char *play_env = g_getenv("WPE_TSP_PLAY_YOUTUBE_IN_MPV");
     app.play_youtube = play_env && *play_env && strcmp(play_env, "0"); /* default 0: videos play in the page */
+    gboolean youtube_ytp = !g_strcmp0(play_env, "2"); /* 2: resolved by ytp (RustyPipe), 1: by yt-dlp */
     PlayerCallbacks player_callbacks = {
         .release_display = player_release_display,
         .restore_display = player_restore_display,
@@ -2720,12 +2721,12 @@ int main(int argc, char **argv)
         .finished = player_finished,
         .ytdlp_missing = player_ytdlp_missing,
     };
-    /* mpv and yt-dlp are part of the app: <app>/mpv, <app>/bin/yt-dlp */
+    /* mpv, yt-dlp and ytp are part of the app: <app>/mpv, <app>/bin/yt-dlp, <app>/bin/ytp */
     char *exe_path = g_file_read_link("/proc/self/exe", NULL);
     char *app_dir = g_path_get_dirname(exe_path);
     char *app_root = g_path_get_dirname(app_dir);
     player_init(app_root, &player_callbacks);
-    if (app.play_youtube) {
+    if (app.play_youtube && !youtube_ytp) {
         char *ytdlp = player_ytdlp_path();
         ytdlp_init(ytdlp);
         g_free(ytdlp);
@@ -2822,6 +2823,11 @@ int main(int argc, char **argv)
                                          "cookies.sqlite", NULL);
     webkit_cookie_manager_set_persistent_storage(webkit_network_session_get_cookie_manager(network_session),
                                                  cookie_path, WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
+    if (youtube_ytp) { /* ytp plays YouTube logged in with this jar's youtube.com cookies */
+        char *ytp_cache = g_build_filename(g_get_user_cache_dir(), "ytp", NULL);
+        player_use_ytp(cookie_path, ytp_cache);
+        g_free(ytp_cache);
+    }
     g_free(cookie_path);
     const char *download_env = g_getenv("WPE_TSP_DOWNLOAD_DIR");
     downloads_init(webkit_network_session_get_default(), download_env && *download_env ? download_env : DEFAULT_DOWNLOAD_DIR,
