@@ -1,7 +1,7 @@
 /*
- * Video playback through the bundled mpv/yt-dlp (or ytp), see player.h.
- * Mirrors youtube-tsp's src/player.c: same yt-dlp invocation (format, --print resolution -g,
- * HLS retry, portrait rotation), same "ytp streams" handling and same mpv command line and environment.
+ * Video playback through the bundled mpv/yt-dlp (or ytp), see player.h:
+ * yt-dlp invocation (format, --print resolution -g, HLS retry, portrait rotation), "ytp streams"
+ * handling, mpv command line and environment.
  */
 #include "player.h"
 
@@ -17,7 +17,7 @@
 #define RESOLVE_OUT "/tmp/wpe-tsp-yurl"
 #define RESOLVE_ERR "/tmp/wpe-tsp-yurl-err"
 #define MPV_LOG "/tmp/mpv_last.log"
-/* youtube-tsp's format: H.264 + AAC up to 720p (what the device decodes in software in real time) */
+/* H.264 + AAC up to 720p (what the device decodes in software in real time) */
 #define YT_DLP_FORMAT "bestvideo[vcodec^=avc][width<=1280][height<=1280]+bestaudio[acodec^=mp4a]" \
                       "/best[ext=mp4][width<=1280][height<=1280]/22/18"
 #define HLS_FORMAT "best[height<=720][protocol^=m3u8]/best[protocol^=m3u8]/best"
@@ -28,7 +28,7 @@
 #define CACHE_MARGIN_S 600
 /* mpv failing this soon on cached URLs (e.g. 403: links tied to a changed IP) means resolve again */
 #define CACHE_FAIL_S 10
-#define YTP_MAX_HEIGHT "720"  /* youtube-tsp's default: what the decoder plays smoothly */
+#define YTP_MAX_HEIGHT "720"  /* as YT_DLP_FORMAT: what the decoder plays smoothly */
 
 typedef enum { P_IDLE, P_RESOLVING, P_PLAYING } PlayerState;
 
@@ -485,7 +485,8 @@ static void on_resolve_exited(GPid pid, gint status, gpointer user_data)
 
 /* ---- ytp (RustyPipe) ------------------------------------------------------ */
 
-/* "ytp streams" prints one JSON object (see youtube-tsp's backend/ytp/src/main.rs); JSC parses it */
+/* "ytp streams" prints one JSON object (video_url, audio_url, hls_url, width, height, is_live, client,
+ * capped, ...); JSC parses it */
 static char *json_string(JSCValue *obj, const char *key)
 {
     JSCValue *v = jsc_value_object_get_property(obj, key);

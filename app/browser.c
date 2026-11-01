@@ -1010,7 +1010,7 @@ static void on_app_scheme_request(WebKitURISchemeRequest *request, gpointer user
 }
 
 /* ------------------------------------------------------------------------- */
-/* Video: YouTube pages and media files play in the YouTube client's mpv            */
+/* Video: YouTube pages and media files play in the bundled mpv                     */
 /* ------------------------------------------------------------------------- */
 
 static int create_display(void);

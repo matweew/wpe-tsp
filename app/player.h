@@ -1,7 +1,7 @@
 /*
  * Video playback with the bundled mpv (and yt-dlp or ytp for YouTube pages):
  *   <app>/mpv/mpv (+ lib/, mpv.conf, input.conf, ca-certificates.crt), <app>/bin/yt-dlp, <app>/bin/ytp.
- * Same mpv build and configuration as the youtube-tsp client; ytp is its RustyPipe backend.
+ * ytp is a RustyPipe command-line front end.
  */
 #pragma once
 

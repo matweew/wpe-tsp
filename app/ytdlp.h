@@ -1,5 +1,5 @@
 /*
- * yt-dlp version check and update (ported from youtube-tsp's src/updater.c).
+ * yt-dlp version check and update.
  *
  * Checks the latest GitHub release of yt-dlp against the installed binary (at most once a day
  * over the network) and, on request, installs yt-dlp_linux_aarch64 safely:
