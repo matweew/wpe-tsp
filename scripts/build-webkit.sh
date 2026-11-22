@@ -6,7 +6,7 @@
 # Downloads the WPE WebKit release tarball into src/ if needed and applies patches/*.patch.
 set -euo pipefail
 
-WEBKIT_VERSION=2.54.1
+WEBKIT_VERSION=2.54.3
 # WEBKIT_SRC: an existing patched tree to build instead (e.g. one updated in place from the previous
 # release, so the build directory and its objects stay valid)
 SRC=${WEBKIT_SRC:-/work/src/wpewebkit-${WEBKIT_VERSION}}

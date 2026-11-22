@@ -377,7 +377,7 @@ needs hard links, which exFAT lacks, so it lives on the internal ext4 partition)
 
 | What | Where it comes from |
 |---|---|
-| WPE WebKit 2.54.1 | release tarball [wpewebkit-2.54.1.tar.xz](https://wpewebkit.org/releases/wpewebkit-2.54.1.tar.xz) from [wpewebkit.org/release](https://wpewebkit.org/release/), downloaded by `scripts/build-webkit.sh` into `src/` and patched with `patches/` |
+| WPE WebKit 2.54.3 | release tarball [wpewebkit-2.54.3.tar.xz](https://wpewebkit.org/releases/wpewebkit-2.54.3.tar.xz) from [wpewebkit.org/release](https://wpewebkit.org/release/), downloaded by `scripts/build-webkit.sh` into `src/` and patched with `patches/` |
 | SDL2 headers | TrimUI's [toolchain_sdk_smartpro](https://github.com/trimui/toolchain_sdk_smartpro) release `SDL2-2.26.1.GE8300.tgz` (Dockerfile) |
 | SDL2 / SDL2_ttf libraries to link against | copied from the device by `scripts/fetch-device-sdl.sh` |
 | Build-container packages | Debian bookworm (amd64 + arm64 multiarch), see `Dockerfile`; GStreamer 1.22 and its plugins (in-page video) are bundled from there |
@@ -432,7 +432,7 @@ scripts/fetch-device-sdl.sh
 # 3a. Minimal FFmpeg for GStreamer's gst-libav (in-page video decoders, ~4 MB, a few minutes)
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/work wpe-tsp-builder scripts/build-ffmpeg.sh
 
-# 3. Build WPE WebKit: downloads the 2.54.1 tarball into src/, applies patches/, builds and
+# 3. Build WPE WebKit: downloads the 2.54.3 tarball into src/, applies patches/, builds and
 #    installs into build/stage/ (first run ~1.5-2 h; uses half the PC: half the CPU threads, fewer
 #    jobs if half the RAM can't hold them at ~1.5 GB each; a number of jobs as argument overrides it)
 docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/work \
@@ -454,7 +454,7 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/work wpe-tsp-builder scrip
   the GPU process, bubblewrap sandbox, WebDriver, spellcheck, speech, gamepad API, ATK, AVIF/JPEG XL,
   hyphenation, introspection and docs. WebGL is built (ANGLE, +6 MB) and switched at runtime.
 - To rebuild WebKit after editing `src/`, run step 3 again (incremental). Patches are applied only once
-  (marker file `src/wpewebkit-2.54.1/.patched`). After changing a patch, delete `src/wpewebkit-2.54.1` so it
+  (marker file `src/wpewebkit-2.54.3/.patched`). After changing a patch, delete `src/wpewebkit-2.54.3` so it
   is re-extracted and re-patched.
 - A new WebKit bug-fix release without a full rebuild: diff the old and new release tarballs, apply the
   new release plus `patches/` to a copy, sync the changed files into the existing tree and build it with
@@ -839,7 +839,7 @@ on the backslash key); digits and symbols are built in. A layout name that doesn
 
 ## WebKit patches
 
-All in `patches/`, applied by `scripts/build-webkit.sh` to the 2.54.1 release tarball:
+All in `patches/`, applied by `scripts/build-webkit.sh` to the 2.54.3 release tarball:
 
 | Patch | Why |
 |---|---|
